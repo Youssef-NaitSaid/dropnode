@@ -1,13 +1,14 @@
 import { Component, inject, ChangeDetectionStrategy, output } from '@angular/core';
+import { CdkMenu, CdkMenuItem, CdkMenuTrigger } from '@angular/cdk/menu';
 import { GraphService } from '../../services/graph.service';
 import { HistoryService } from '../../services/history.service';
-import { ToastService } from '../toast/toast';
+import { ExportService } from '../../services/export.service';
 
 @Component({
   selector: 'app-toolbar',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [],
+  imports: [CdkMenu, CdkMenuItem, CdkMenuTrigger],
   template: `
     <div class="toolbar">
       <div class="toolbar-left">
@@ -53,19 +54,45 @@ import { ToastService } from '../toast/toast';
             <path d="M8 1l4 4H9v5H7V5H4l4-4zM2 11v3h12v-3h-1.5v1.5h-9V11H2z"/>
           </svg>
         </button>
-        <button class="tool-btn" (click)="exportJson()" title="Export JSON">
+        <button class="tool-btn" [cdkMenuTriggerFor]="exportMenu" title="Export">
           <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
             <path d="M8 12L4 8h2.5V3h3v5H12L8 12zM2 13v1.5h12V13H2z"/>
-          </svg>
-        </button>
-        <button class="tool-btn" (click)="copyToClipboard()" title="Copy to Clipboard">
-          <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
-            <path d="M4 2v10h8V2H4zm1 1h6v8H5V3zM2 4v10h8v-1H3V4H2z"/>
           </svg>
         </button>
       </div>
     </div>
 
+    <ng-template #exportMenu>
+      <div class="export-menu" cdkMenu>
+        <button class="export-menu-item" cdkMenuItem (cdkMenuItemTriggered)="exportToFile()">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+            <path d="M8 12L4 8h2.5V3h3v5H12L8 12zM2 13v1.5h12V13H2z"/>
+          </svg>
+          <span>Export JSON file</span>
+        </button>
+        <button class="export-menu-item" cdkMenuItem (cdkMenuItemTriggered)="copyJson()">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+            <path d="M4 2v10h8V2H4zm1 1h6v8H5V3zM2 4v10h8v-1H3V4H2z"/>
+          </svg>
+          <span>Copy JSON</span>
+        </button>
+        <button class="export-menu-item" cdkMenuItem (cdkMenuItemTriggered)="copyLink()">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+            <path d="M9.4 3.7a2.5 2.5 0 013.54 3.54l-2.12 2.12a2.5 2.5 0 01-3.54 0l1.06-1.06a1 1 0 001.42 0l2.12-2.12a1 1 0 00-1.42-1.42l-.9.9-1.06-1.06.9-.9zM6.6 12.3a2.5 2.5 0 01-3.54-3.54l2.12-2.12a2.5 2.5 0 013.54 0L7.66 7.7a1 1 0 00-1.42 0l-2.12 2.12a1 1 0 001.42 1.42l.9-.9 1.06 1.06-.9.9z"/>
+          </svg>
+          <span>Copy link</span>
+        </button>
+        <button class="export-menu-item" cdkMenuItem [cdkMenuItemDisabled]="true">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+            <path d="M12.2 6.53a4 4 0 00-7.7-.98A3 3 0 004.5 11.5h7a2.5 2.5 0 00.7-4.97zM11.5 10h-7a1.5 1.5 0 01-.1-3l1.06-.07.3-.86a2.5 2.5 0 014.82.61l.14.92.93.05a1 1 0 01-.15 2.35z"/>
+          </svg>
+          <span class="export-menu-item-text">
+            <span>Export to Drive</span>
+            <span class="export-menu-hint">Sign in required — coming soon</span>
+          </span>
+        </button>
+      </div>
+    </ng-template>
   `,
   styles: [`
     :host {
@@ -134,12 +161,63 @@ import { ToastService } from '../toast/toast';
       opacity: 0.3;
       cursor: not-allowed;
     }
+    .export-menu {
+      display: flex;
+      flex-direction: column;
+      min-width: 220px;
+      margin-top: 4px;
+      padding: 4px;
+      background: rgba(30, 30, 55, 0.98);
+      backdrop-filter: blur(8px);
+      border: 1px solid #3a3a5c;
+      border-radius: 8px;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+    }
+    .export-menu-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 10px;
+      border: none;
+      border-radius: 6px;
+      background: transparent;
+      color: #b0b0cc;
+      font-size: 13px;
+      font-weight: 500;
+      text-align: left;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+    .export-menu-item svg {
+      flex-shrink: 0;
+      color: #8888aa;
+    }
+    .export-menu-item:hover:not([aria-disabled='true']),
+    .export-menu-item:focus-visible {
+      background: #2a2a4a;
+      color: #f0f0f5;
+      outline: none;
+    }
+    .export-menu-item[aria-disabled='true'] {
+      opacity: 0.45;
+      cursor: not-allowed;
+    }
+    .export-menu-item-text {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+    .export-menu-hint {
+      font-size: 11px;
+      font-weight: 400;
+      color: #8888aa;
+    }
   `],
 })
 export class ToolbarComponent {
   graphService = inject(GraphService);
   historyService = inject(HistoryService);
-  private toastService = inject(ToastService);
+  private exportService = inject(ExportService);
 
   importRequested = output<void>();
 
@@ -169,25 +247,15 @@ export class ToolbarComponent {
     this.importRequested.emit();
   }
 
-  exportJson(): void {
-    const data = this.graphService.exportGraph();
-    const json = JSON.stringify(data, null, 2);
-    const blob = new Blob([json], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'dropnode-graph.json';
-    a.click();
-    URL.revokeObjectURL(url);
-    this.toastService.show('Graph exported to file', 'success');
+  exportToFile(): void {
+    this.exportService.exportToFile();
   }
 
-  copyToClipboard(): void {
-    const data = this.graphService.exportGraph();
-    const json = JSON.stringify(data, null, 2);
-    navigator.clipboard.writeText(json).then(
-      () => this.toastService.show('Copied to clipboard', 'success'),
-      () => this.toastService.show('Failed to copy to clipboard', 'error'),
-    );
+  copyJson(): void {
+    this.exportService.copyJson();
+  }
+
+  copyLink(): void {
+    this.exportService.copyLink();
   }
 }

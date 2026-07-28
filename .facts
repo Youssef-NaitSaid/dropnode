@@ -62,8 +62,12 @@
 - Import is validate-then-replace: an invalid payload is rejected wholesale with a specific error message and existing state stays untouched
 - Import validation rejects duplicate Node ids, Connections referencing Nodes absent from the same payload, and handle values outside top/right/bottom/left; an empty graph is valid
 - Import validation does NOT reject duplicate Connection ids or self-connections — only createConnection guards those
-- label: Export downloads pretty-printed 2-space JSON named dropnode-graph.json, or copies the same JSON to the clipboard, each with a success/error toast
-  command: grep -q 'dropnode-graph.json' src/app/components/toolbar/toolbar.ts
+- label: the toolbar has a single Export button opening a menu with four items: Export JSON file, Copy JSON, Copy link, and a disabled Export to Drive placeholder hinting "Sign in required — coming soon"
+  command: grep -q 'Export to Drive' src/app/components/toolbar/toolbar.ts
+- label: Export downloads pretty-printed 2-space JSON named dropnode-graph.json with a success toast; Copy JSON copies the same JSON to the clipboard with a success/error toast
+  command: grep -q 'dropnode-graph.json' src/app/services/export.service.ts
+- Copy link copies the app URL with the Graph State as ?data=<url-encoded pretty JSON>, dropping any existing query parameters; the link is copied whatever its length, with a success/error toast
+- the Export menu is built on @angular/cdk/menu primitives; export side effects live in ExportService, never in the toolbar component
 - exported Graph State is a copy; mutating it does not affect editor state
 - label: on startup the app imports a Graph State from the URL query parameter named data; a missing parameter is a silent no-op
   command: grep -q "params.get('data')" src/app/services/graph.service.ts
