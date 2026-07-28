@@ -1,0 +1,95 @@
+# dropnode fact sheet
+
+## domain
+
+- a Node is a labeled rectangle on the Canvas with a unique id, a position, and dimensions derived from its label content (GraphNode in code)
+- a Connection is a directed curve linking a Handle on a source Node to a Handle on a target Node, identified by its four endpoint fields
+- a Handle is a connection anchor on one of the four edges of a Node (top, right, bottom, left); its position is derived from the Node's rect
+- the Canvas is the unbounded workspace containing all Nodes and Connections
+- the Viewport is the visible region of the Canvas, defined by a pan offset and a zoom scale
+- the Graph State is the complete serializable model: the arrays of all Nodes and all Connections, and nothing else
+- a Command is an undoable user action exposing execute(), undo(), and a description
+- the History is the ordered record of executed Commands, split into an undo stack and a redo stack
+- the Snap Zone is a 30-canvas-unit radius around a Handle; a dragged connection endpoint inside it attaches to that Handle
+- a Node owns exactly four Handles, one per edge
+- deleting a Node cascade-deletes every Connection referencing it as source or target
+- all Graph State lives in GraphService signals; components mutate it only through the service, transient drags directly and undoable actions via Commands
+- Import replaces the Graph State wholesale after validation; Export serializes it to JSON
+
+## nodes
+
+- double-clicking empty Canvas creates a Node labeled "New Node" centered on the cursor, as a single undo step
+- new Nodes default to 160x48; after render the width auto-sizes to the measured label width with a 120px floor, height stays fixed at 48
+- Node auto-sizing updates go directly to GraphService and never create a History entry
+- double-clicking a Node opens inline label editing; Enter or blur commits, Escape cancels; empty or unchanged labels are never committed
+- renaming a Node is undoable and restores the exact previous label
+- deleting an unknown Node id throws "Node {id} not found"; deleting an unknown Connection id is a silent no-op
+- Node ids follow the pattern node_{timestamp}_{counter} and Connection ids conn_{timestamp}_{counter}; the counter is monotonic within a session
+
+## connections
+
+- dragging from a Handle rejects self-connections and exact duplicates silently (createConnection returns null); reverse-direction and different-handle pairs between the same two Nodes are allowed
+- label: during a connection drag, a dragged endpoint snaps to the nearest Handle within a 30-canvas-unit Snap Zone; the snapped Handle highlights
+  command: grep -q 'snapThreshold = 30' src/app/components/connection-layer/connection-layer.ts
+- the source Node's own Handles are never snap targets during a connection drag
+- dropping a connection drag in empty space (no snap) creates nothing
+- during a connection drag a dashed ghost bezier renders from the source Handle to the cursor
+- clicking a Connection path deletes it as an undoable Command; there is no keyboard shortcut for Connection deletion
+- Connections render as cubic beziers; control points extend perpendicular to each Handle's edge, offset clamped between 40 and 150 (distance x 0.4)
+- Handle positions are the midpoints of the Node's four edges, computed from x, y, width, height
+
+## viewport
+
+- zoom is clamped to the range 0.1 to 5
+- wheel zoom steps by 0.1 per tick, centered on the cursor so the point under the cursor stays fixed on screen
+- toolbar zoom buttons step by 0.1 centered at origin (0,0), not at the screen center — this differs from wheel zoom
+- mousedown-drag on empty Canvas pans the Viewport and deselects the current Node
+- reset view restores pan (0,0) and zoom 1; importing or clearing a graph does NOT reset the Viewport
+- pan and zoom apply as one shared CSS translate+scale transform covering both the DOM node layer and the SVG connection layer
+
+## history
+
+- Ctrl+Z undoes and Ctrl+Shift+Z redoes; there is no Ctrl+Y binding
+- executing or pushing any new Command clears the redo stack
+- undo and redo on empty stacks are silent no-ops; the stacks have no size limit
+- an entire Node drag is one undo step: per-mousemove position updates bypass History, and a single MoveNodeCommand is pushed on mouseup only if movement exceeded 2px in either axis
+- a plain click on a Node selects it without creating a History entry
+- deleting a Node via Delete/Backspace removes the Node and its Connections as one compound undo step; undo restores the Node and its Connections with their original ids
+- Import does not clear History, so undoing after an Import can reference stale ids
+
+## import-export
+
+- Import is validate-then-replace: an invalid payload is rejected wholesale with a specific error message and existing state stays untouched
+- Import validation rejects duplicate Node ids, Connections referencing Nodes absent from the same payload, and handle values outside top/right/bottom/left; an empty graph is valid
+- Import validation does NOT reject duplicate Connection ids or self-connections — only createConnection guards those
+- label: Export downloads pretty-printed 2-space JSON named dropnode-graph.json, or copies the same JSON to the clipboard, each with a success/error toast
+  command: grep -q 'dropnode-graph.json' src/app/components/toolbar/toolbar.ts
+- exported Graph State is a copy; mutating it does not affect editor state
+- label: on startup the app imports a Graph State from the URL query parameter named data; a missing parameter is a silent no-op
+  command: grep -q "params.get('data')" src/app/services/graph.service.ts
+- invalid URL data shows an error toast prefixed "URL data invalid: "; a successful URL load toasts "Graph loaded from URL"
+- the import dialog offers File Upload and Paste JSON tabs; file content takes precedence over pasted text, errors show inline and keep the dialog open
+
+## shortcuts
+
+- all keyboard shortcuts are ignored while focus is in an input, textarea, or contenteditable element
+- Delete or Backspace deletes the selected Node (with its Connections); Escape deselects and blurs the active element
+
+## ui
+
+- a single toast shows at bottom-right; a new toast replaces the current one and resets the 4-second auto-dismiss timer
+
+## architecture
+
+- Nodes are DOM Angular components and Connections an SVG overlay, per ADR-0001 hybrid rendering
+- label: the perf-critical components (canvas, node, connection-layer) use OnPush change detection per ADR-0003
+  command: grep -q OnPush src/app/components/canvas/canvas.ts && grep -q OnPush src/app/components/node/node.ts && grep -q OnPush src/app/components/connection-layer/connection-layer.ts
+- the root App and Toast components do not declare OnPush, deviating from the ADR-0003 mandate that all components use OnPush
+- the performance target is 200 Nodes with ~100 Connections; beyond that requires virtualization or canvas rendering (ADR-0003)
+- label: built on Angular 22 standalone components with signals
+  command: grep -q '"@angular/core": "^22' package.json
+- label: change detection runs with zone.js; the app is not zoneless
+  command: grep -q '"zone.js"' package.json
+- label: the unit test suite (Vitest + jsdom) passes
+  command: npx vitest run --reporter=dot
+- the SVG connection layer sizes itself to the node extent plus 1000, with a 5000-unit minimum
