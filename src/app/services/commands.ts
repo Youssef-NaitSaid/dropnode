@@ -12,10 +12,14 @@ export class CreateNodeCommand implements Command {
     private label: string,
     private x: number,
     private y: number,
+    private parentId?: string,
   ) {}
 
   execute(): void {
     this.node = this.graphService.createNode(this.label, this.x, this.y);
+    if (this.parentId) {
+      this.graphService.setNodeParent(this.node.id, this.parentId);
+    }
   }
 
   undo(): void {
@@ -91,6 +95,7 @@ export class DeleteNodeCommand implements Command {
   description = 'Delete Node';
   private deletedNode: GraphNode | null = null;
   private removedConnections: Connection[] = [];
+  private releasedChildIds: string[] = [];
 
   constructor(
     private graphService: GraphService,
@@ -101,12 +106,18 @@ export class DeleteNodeCommand implements Command {
     const result = this.graphService.deleteNode(this.nodeId);
     this.deletedNode = result.node;
     this.removedConnections = result.removedConnections;
+    this.releasedChildIds = result.releasedChildIds;
   }
 
   undo(): void {
     if (!this.deletedNode) return;
-    // Re-create the node
-    this.graphService.nodes.update(nodes => [...nodes, { ...this.deletedNode! }]);
+    // Re-create the node and re-parent the children it had released
+    this.graphService.nodes.update(nodes => [
+      ...nodes.map(n =>
+        this.releasedChildIds.includes(n.id) ? { ...n, parentId: this.nodeId } : n
+      ),
+      { ...this.deletedNode! },
+    ]);
     // Re-create removed connections
     if (this.removedConnections.length > 0) {
       this.graphService.connections.update(conns => [
@@ -184,5 +195,139 @@ export class DeleteNodeCompoundCommand implements Command {
 
   undo(): void {
     this.deleteNodeCmd.undo();
+  }
+}
+
+export class CreateGroupCommand implements Command {
+  description = 'Create Group';
+  private group: GraphNode | null = null;
+
+  constructor(
+    private graphService: GraphService,
+    private label: string,
+    private x: number,
+    private y: number,
+  ) {}
+
+  execute(): void {
+    this.group = this.graphService.createGroup(this.label, this.x, this.y);
+  }
+
+  undo(): void {
+    if (this.group) {
+      this.graphService.deleteNode(this.group.id);
+    }
+  }
+}
+
+export class ChangeParentCommand implements Command {
+  description = 'Change Group Membership';
+  private originalParentId: string | null;
+
+  constructor(
+    private graphService: GraphService,
+    private nodeId: string,
+    private newParentId: string | null,
+  ) {
+    const node = this.graphService.nodes().find(n => n.id === nodeId);
+    this.originalParentId = node?.parentId ?? null;
+  }
+
+  execute(): void {
+    this.graphService.setNodeParent(this.nodeId, this.newParentId);
+  }
+
+  undo(): void {
+    this.graphService.setNodeParent(this.nodeId, this.originalParentId);
+  }
+}
+
+export class MoveGroupCommand implements Command {
+  description = 'Move Group';
+
+  constructor(
+    private graphService: GraphService,
+    private groupId: string,
+    private newX: number,
+    private newY: number,
+    private originalX: number,
+    private originalY: number,
+  ) {}
+
+  execute(): void {
+    this.graphService.moveGroup(this.groupId, this.newX, this.newY);
+  }
+
+  undo(): void {
+    this.graphService.moveGroup(this.groupId, this.originalX, this.originalY);
+  }
+}
+
+export interface NodeRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export class ResizeNodeCommand implements Command {
+  description = 'Resize Node';
+
+  constructor(
+    private graphService: GraphService,
+    private nodeId: string,
+    private newRect: NodeRect,
+    private originalRect: NodeRect,
+  ) {}
+
+  execute(): void {
+    this.graphService.resizeNode(this.nodeId, this.newRect);
+  }
+
+  undo(): void {
+    this.graphService.resizeNode(this.nodeId, this.originalRect);
+  }
+}
+
+export class SetNodeColorCommand implements Command {
+  description = 'Set Node Color';
+  private originalColor: string | null;
+
+  constructor(
+    private graphService: GraphService,
+    private nodeId: string,
+    private newColor: string | null,
+  ) {
+    const node = this.graphService.nodes().find(n => n.id === nodeId);
+    this.originalColor = node?.color ?? null;
+  }
+
+  execute(): void {
+    this.graphService.setNodeColor(this.nodeId, this.newColor);
+  }
+
+  undo(): void {
+    this.graphService.setNodeColor(this.nodeId, this.originalColor);
+  }
+}
+
+// Generic compound: executes parts in order, undoes them in reverse order.
+// Used for drops that change membership and sever Group/child connections.
+export class CompoundCommand implements Command {
+  constructor(
+    public description: string,
+    private parts: Command[],
+  ) {}
+
+  execute(): void {
+    for (const part of this.parts) {
+      part.execute();
+    }
+  }
+
+  undo(): void {
+    for (let i = this.parts.length - 1; i >= 0; i--) {
+      this.parts[i].undo();
+    }
   }
 }

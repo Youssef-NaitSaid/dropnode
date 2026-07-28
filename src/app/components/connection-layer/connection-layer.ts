@@ -166,8 +166,11 @@ export class ConnectionLayerComponent {
     let targetHandle: HandleSide | null = null;
     let minDist = snapThreshold;
 
+    const sourceNode = this.nodes().find(n => n.id === state.sourceNodeId);
     for (const node of this.nodes()) {
       if (node.id === state.sourceNodeId) continue;
+      // A Group and its own children are never snap targets of each other
+      if (node.parentId === state.sourceNodeId || sourceNode?.parentId === node.id) continue;
       for (const side of ['top', 'right', 'bottom', 'left'] as HandleSide[]) {
         const handlePos = this.getHandlePos(node.id, side);
         const dist = Math.sqrt((canvasX - handlePos.x) ** 2 + (canvasY - handlePos.y) ** 2);

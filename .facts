@@ -2,16 +2,18 @@
 
 ## domain
 
-- a Node is a labeled rectangle on the Canvas with a unique id, a position, and dimensions derived from its label content (GraphNode in code)
+- a Node is a labeled rectangle on the Canvas with a unique id, a position, and dimensions; its label content dictates a minimum width (GraphNode in code)
+- a Group is a distinct kind of node (kind 'group') that visually and logically contains child nodes via their parentId; nesting is one level deep — a Group never contains another Group
 - a Connection is a directed curve linking a Handle on a source Node to a Handle on a target Node, identified by its four endpoint fields
 - a Handle is a connection anchor on one of the four edges of a Node (top, right, bottom, left); its position is derived from the Node's rect
+- a Resize Grip is a draggable control at one of the four corners of the selected node, used to change the node's size; distinct from a Handle
 - the Canvas is the unbounded workspace containing all Nodes and Connections
 - the Viewport is the visible region of the Canvas, defined by a pan offset and a zoom scale
 - the Graph State is the complete serializable model: the arrays of all Nodes and all Connections, and nothing else
 - a Command is an undoable user action exposing execute(), undo(), and a description
 - the History is the ordered record of executed Commands, split into an undo stack and a redo stack
 - the Snap Zone is a 30-canvas-unit radius around a Handle; a dragged connection endpoint inside it attaches to that Handle
-- a Node owns exactly four Handles, one per edge
+- a Node owns exactly four Handles, one per edge; a Group carries the same four Handles
 - deleting a Node cascade-deletes every Connection referencing it as source or target
 - all Graph State lives in GraphService signals; components mutate it only through the service, transient drags directly and undoable actions via Commands
 - Import replaces the Graph State wholesale after validation; Export serializes it to JSON
@@ -19,12 +21,37 @@
 ## nodes
 
 - double-clicking empty Canvas creates a Node labeled "New Node" centered on the cursor, as a single undo step
-- new Nodes default to 160x48; after render the width auto-sizes to the measured label width with a 120px floor, height stays fixed at 48
+- new Nodes default to 160x48; after render the measured label width (120px floor) raises the Node's width but never shrinks it — manual sizes are grow-only protected
 - Node auto-sizing updates go directly to GraphService and never create a History entry
+- four Resize Grips show at the corners of the selected node only; dragging one resizes with the opposite corner anchored
+- a grip drag clamps width to the label-derived minimum (max of 120 and the measured label width) and height to 48
+- an entire grip drag is one undo step: per-mousemove size updates bypass History, and a single ResizeNodeCommand is pushed on mouseup only if the rect changed more than 2px
 - double-clicking a Node opens inline label editing; Enter or blur commits, Escape cancels; empty or unchanged labels are never committed
 - renaming a Node is undoable and restores the exact previous label
 - deleting an unknown Node id throws "Node {id} not found"; deleting an unknown Connection id is a silent no-op
 - Node ids follow the pattern node_{timestamp}_{counter} and Connection ids conn_{timestamp}_{counter}; the counter is monotonic within a session
+
+## groups
+
+- the toolbar "Add Group" button creates a 320x200 Group labeled "New Group" centered in the Viewport, as a single undo step; Groups use the node_ id pattern
+- membership is containment, judged by the node's center point on mouseup: center inside a Group's bounds joins it, center outside releases it — each change is one undo step
+- when overlapping Groups both contain the drop point, the topmost-rendered Group (later in the nodes array) claims the node
+- dropping a node into a Group it is connected to succeeds and severs those Connections: move, membership change, and severed Connections form one compound undo step restoring original ids
+- dragging a Group moves it and all its children rigidly as one undo step; children keep absolute Canvas coordinates (ADR-0005)
+- dragging a child inside its Group only moves the child; membership is unchanged
+- deleting a Group releases its children in place (un-parented, positions kept) and removes the Group's own Connections as one compound undo step; undo restores membership and Connections with original ids
+- a Group cannot be connected to its own children in either direction: createConnection returns null, connection drags never snap to the counterpart, and Import rejects such payloads
+- a Group can be resized no smaller than its children's bounding box plus 16 canvas units of padding; a childless Group clamps to the same 120x48 floor as a Node; resize never changes membership
+- label: double-clicking a Group's label strip edits its label inline; double-clicking its body creates a "New Node" child at the cursor as one undo step
+  command: grep -q 'createChild' src/app/components/node/node.ts
+- Groups render beneath regular nodes and draw their fill at 30% alpha so children stay visible
+
+## colors
+
+- label: the palette holds exactly 8 curated colors (NODE_PALETTE); an absent color field means the default node background
+  command: grep -q 'NODE_PALETTE' src/app/models/node.ts
+- a swatch row (default + 8 palette colors) appears in the toolbar center only while a node is selected; clicking a swatch is one undoable SetNodeColorCommand, and re-clicking the active swatch is a no-op
+- Import rejects color values outside the palette wholesale with "Invalid node {id}: color must be a palette color"
 
 ## connections
 
@@ -52,7 +79,7 @@
 - Ctrl+Z undoes and Ctrl+Shift+Z redoes; there is no Ctrl+Y binding
 - executing or pushing any new Command clears the redo stack
 - undo and redo on empty stacks are silent no-ops; the stacks have no size limit
-- an entire Node drag is one undo step: per-mousemove position updates bypass History, and a single MoveNodeCommand is pushed on mouseup only if movement exceeded 2px in either axis
+- an entire Node drag is one undo step: per-mousemove position updates bypass History, and a single Command is pushed on mouseup only if movement exceeded 2px in either axis — a MoveNodeCommand normally, a compound when the drop also changed Group membership, a MoveGroupCommand for Group drags
 - a plain click on a Node selects it without creating a History entry
 - deleting a Node via Delete/Backspace removes the Node and its Connections as one compound undo step; undo restores the Node and its Connections with their original ids
 - Import does not clear History, so undoing after an Import can reference stale ids
@@ -61,6 +88,8 @@
 
 - Import is validate-then-replace: an invalid payload is rejected wholesale with a specific error message and existing state stays untouched
 - Import validation rejects duplicate Node ids, Connections referencing Nodes absent from the same payload, and handle values outside top/right/bottom/left; an empty graph is valid
+- Import validation also rejects kind values other than 'group', off-palette colors, parentId values that reference a missing node or a non-Group, Groups carrying a parentId, and Connections linking a Group to its own child
+- payloads without kind, parentId, or color import unchanged as plain nodes — pre-Group exports and links stay valid
 - Import validation does NOT reject duplicate Connection ids or self-connections — only createConnection guards those
 - label: the toolbar has a single Export button opening a menu with four items: Export JSON file, Copy JSON, Copy link, and a disabled Export to Drive placeholder hinting "Sign in required — coming soon"
   command: grep -q 'Export to Drive' src/app/components/toolbar/toolbar.ts

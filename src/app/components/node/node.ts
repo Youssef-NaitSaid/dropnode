@@ -1,9 +1,15 @@
 import {
-  Component, input, output, signal,
+  Component, input, output, signal, computed,
   ChangeDetectionStrategy, AfterViewInit, viewChild, ElementRef,
 } from '@angular/core';
 import { GraphNode, HandleSide } from '../../models/node';
 import { HandleComponent } from '../handle/handle';
+
+export type GripCorner = 'nw' | 'ne' | 'sw' | 'se';
+
+const DEFAULT_NODE_BACKGROUND = '#f0f0f5';
+// 30% alpha suffix so Group fills stay see-through over children
+const GROUP_FILL_ALPHA = '4D';
 
 @Component({
   selector: 'app-node',
@@ -13,25 +19,46 @@ import { HandleComponent } from '../handle/handle';
   template: `
     <div
       class="node-card"
+      [class.group-card]="isGroup()"
       [class.selected]="isSelected()"
       [style.left.px]="node().x"
       [style.top.px]="node().y"
-      [style.min-width.px]="120"
+      [style.width.px]="node().width"
+      [style.height.px]="node().height"
+      [style.background]="cardBackground()"
       (mousedown)="onMouseDown($event)"
       (dblclick)="onDoubleClick($event)"
     >
-      @if (isEditing()) {
-        <input
-          class="node-label-input"
-          [value]="node().label"
-          (blur)="finishEdit($event)"
-          (keydown.enter)="finishEdit($event)"
-          (keydown.escape)="cancelEdit()"
-          (mousedown)="$event.stopPropagation()"
-          autofocus
-        />
+      @if (isGroup()) {
+        <div class="group-label-strip" (dblclick)="onLabelStripDoubleClick($event)">
+          @if (isEditing()) {
+            <input
+              class="node-label-input group-label-input"
+              [value]="node().label"
+              (blur)="finishEdit($event)"
+              (keydown.enter)="finishEdit($event)"
+              (keydown.escape)="cancelEdit()"
+              (mousedown)="$event.stopPropagation()"
+              autofocus
+            />
+          } @else {
+            <span class="group-label">{{ node().label }}</span>
+          }
+        </div>
       } @else {
-        <span #labelRef class="node-label">{{ node().label }}</span>
+        @if (isEditing()) {
+          <input
+            class="node-label-input"
+            [value]="node().label"
+            (blur)="finishEdit($event)"
+            (keydown.enter)="finishEdit($event)"
+            (keydown.escape)="cancelEdit()"
+            (mousedown)="$event.stopPropagation()"
+            autofocus
+          />
+        } @else {
+          <span #labelRef class="node-label">{{ node().label }}</span>
+        }
       }
 
       @for (side of handleSides; track side) {
@@ -45,6 +72,19 @@ import { HandleComponent } from '../handle/handle';
           [class.handle-left]="side === 'left'"
           (startDrag)="onHandleDragStart($event)"
         />
+      }
+
+      @if (isSelected() && !isEditing()) {
+        @for (corner of gripCorners; track corner) {
+          <div
+            class="grip"
+            [class.grip-nw]="corner === 'nw'"
+            [class.grip-ne]="corner === 'ne'"
+            [class.grip-sw]="corner === 'sw'"
+            [class.grip-se]="corner === 'se'"
+            (mousedown)="onGripMouseDown(corner, $event)"
+          ></div>
+        }
       }
     </div>
   `,
@@ -63,7 +103,10 @@ import { HandleComponent } from '../handle/handle';
       display: flex;
       align-items: center;
       justify-content: center;
+      min-width: 120px;
       min-height: 48px;
+      box-sizing: border-box;
+      overflow: visible;
       box-shadow: 0 2px 8px rgba(0,0,0,0.3);
       transition: border-color 0.15s ease, box-shadow 0.15s ease;
     }
@@ -73,6 +116,31 @@ import { HandleComponent } from '../handle/handle';
     .node-card.selected {
       border-color: #6c63ff;
       box-shadow: 0 0 0 2px rgba(108,99,255,0.3), 0 4px 16px rgba(108,99,255,0.2);
+    }
+    .group-card {
+      padding: 0;
+      align-items: flex-start;
+      justify-content: flex-start;
+      border-style: dashed;
+      box-shadow: none;
+    }
+    .group-label-strip {
+      width: 100%;
+      height: 28px;
+      display: flex;
+      align-items: center;
+      padding: 0 12px;
+      box-sizing: border-box;
+      border-radius: 6px 6px 0 0;
+      background: rgba(58, 58, 92, 0.35);
+    }
+    .group-label {
+      color: #f0f0f5;
+      font-size: 12px;
+      font-weight: 600;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
     .node-label {
       color: #1a1a2e;
@@ -91,6 +159,12 @@ import { HandleComponent } from '../handle/handle';
       width: 100%;
       min-width: 80px;
       text-align: center;
+    }
+    .group-label-input {
+      color: #f0f0f5;
+      font-size: 12px;
+      font-weight: 600;
+      text-align: left;
     }
     .handle-top {
       position: absolute;
@@ -116,9 +190,22 @@ import { HandleComponent } from '../handle/handle';
       top: 50%;
       transform: translateY(-50%);
     }
+    .grip {
+      position: absolute;
+      width: 10px;
+      height: 10px;
+      border-radius: 2px;
+      background: #6c63ff;
+      border: 2px solid #1a1a2e;
+      z-index: 11;
+    }
+    .grip-nw { top: -5px; left: -5px; cursor: nwse-resize; }
+    .grip-ne { top: -5px; right: -5px; cursor: nesw-resize; }
+    .grip-sw { bottom: -5px; left: -5px; cursor: nesw-resize; }
+    .grip-se { bottom: -5px; right: -5px; cursor: nwse-resize; }
   `],
 })
-export class NodeComponent {
+export class NodeComponent implements AfterViewInit {
   node = input.required<GraphNode>();
   isSelected = input(false);
   snapTarget = input<{ nodeId: string; handle: HandleSide } | null>(null);
@@ -126,11 +213,21 @@ export class NodeComponent {
   startMove = output<{ nodeId: string; event: MouseEvent }>();
   rename = output<{ nodeId: string; newLabel: string }>();
   handleDragStart = output<{ nodeId: string; handle: HandleSide; event: MouseEvent }>();
+  startResize = output<{ nodeId: string; corner: GripCorner; minWidth: number; minHeight: number; event: MouseEvent }>();
+  createChild = output<{ parentId: string; clientX: number; clientY: number }>();
   private labelRef = viewChild<ElementRef<HTMLSpanElement>>('labelRef');
   sizeChanged = output<{ nodeId: string; width: number; height: number }>();
 
   isEditing = signal(false);
   handleSides: HandleSide[] = ['top', 'right', 'bottom', 'left'];
+  gripCorners: GripCorner[] = ['nw', 'ne', 'sw', 'se'];
+
+  isGroup = computed(() => this.node().kind === 'group');
+
+  cardBackground = computed(() => {
+    const base = this.node().color ?? DEFAULT_NODE_BACKGROUND;
+    return this.isGroup() ? base + GROUP_FILL_ALPHA : base;
+  });
 
   isHandleSnapped(side: HandleSide): boolean {
     const target = this.snapTarget();
@@ -144,6 +241,20 @@ export class NodeComponent {
   }
 
   onDoubleClick(event: MouseEvent): void {
+    event.stopPropagation();
+    if (this.isGroup()) {
+      // Group body: create a child node at the cursor (label strip edits instead)
+      this.createChild.emit({
+        parentId: this.node().id,
+        clientX: event.clientX,
+        clientY: event.clientY,
+      });
+      return;
+    }
+    this.isEditing.set(true);
+  }
+
+  onLabelStripDoubleClick(event: MouseEvent): void {
     event.stopPropagation();
     this.isEditing.set(true);
   }
@@ -166,19 +277,45 @@ export class NodeComponent {
     this.handleDragStart.emit(event);
   }
 
-  private measureAndEmitSize(): void {
+  onGripMouseDown(corner: GripCorner, event: MouseEvent): void {
+    event.stopPropagation();
+    event.preventDefault();
+    this.startResize.emit({
+      nodeId: this.node().id,
+      corner,
+      minWidth: this.minLabelWidth(),
+      minHeight: 48,
+      event,
+    });
+  }
+
+  // The label-derived auto-size acts as the minimum width when resizing
+  private minLabelWidth(): number {
+    return Math.max(120, this.measureLabelWidth() ?? 0);
+  }
+
+  private measureLabelWidth(): number | null {
     const el = this.labelRef()?.nativeElement;
-    if (!el) return;
+    if (!el) return null;
     const parent = el.parentElement;
-    if (!parent) return;
+    if (!parent) return null;
     const cs = getComputedStyle(parent);
     const padL = parseFloat(cs.paddingLeft) || 0;
     const padR = parseFloat(cs.paddingRight) || 0;
     const bordL = parseFloat(cs.borderLeftWidth) || 0;
     const bordR = parseFloat(cs.borderRightWidth) || 0;
-    const measuredWidth = Math.max(120, el.scrollWidth + padL + padR + bordL + bordR);
-    if (Math.abs(measuredWidth - this.node().width) > 1) {
-      this.sizeChanged.emit({ nodeId: this.node().id, width: measuredWidth, height: 48 });
+    return el.scrollWidth + padL + padR + bordL + bordR;
+  }
+
+  // Grow-only: the measured label width raises the node's width floor but
+  // never shrinks a manually grown node
+  private measureAndEmitSize(): void {
+    if (this.isGroup()) return;
+    const measured = this.measureLabelWidth();
+    if (measured === null) return;
+    const measuredWidth = Math.max(120, measured);
+    if (measuredWidth > this.node().width + 1) {
+      this.sizeChanged.emit({ nodeId: this.node().id, width: measuredWidth, height: this.node().height });
     }
   }
 

@@ -3,6 +3,8 @@ import { CdkMenu, CdkMenuItem, CdkMenuTrigger } from '@angular/cdk/menu';
 import { GraphService } from '../../services/graph.service';
 import { HistoryService } from '../../services/history.service';
 import { ExportService } from '../../services/export.service';
+import { CreateGroupCommand, SetNodeColorCommand } from '../../services/commands';
+import { NODE_PALETTE } from '../../models/node';
 
 @Component({
   selector: 'app-toolbar',
@@ -28,6 +30,26 @@ import { ExportService } from '../../services/export.service';
             <path d="M8.5 3L13 7l-4.5 4V8.5C5 8.5 3 10 3 13c0-4.5 2.5-6.5 5.5-6.5V3z"/>
           </svg>
         </button>
+        @if (graphService.selectedNodeId(); as selectedId) {
+          <span class="toolbar-divider"></span>
+          <div class="swatch-row" title="Background color">
+            <button
+              class="swatch swatch-default"
+              [class.active]="!selectedColor()"
+              title="Default"
+              (click)="setColor(null)"
+            ></button>
+            @for (color of palette; track color) {
+              <button
+                class="swatch"
+                [class.active]="selectedColor() === color"
+                [style.background]="color"
+                [title]="color"
+                (click)="setColor(color)"
+              ></button>
+            }
+          </div>
+        }
       </div>
 
       <div class="toolbar-right">
@@ -49,6 +71,12 @@ import { ExportService } from '../../services/export.service';
         <span class="toolbar-divider"></span>
         <span class="zoom-label">{{ zoomPercent() }}%</span>
         <span class="toolbar-divider"></span>
+        <button class="tool-btn" (click)="addGroup()" title="Add Group">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+            <rect x="1.5" y="1.5" width="13" height="13" rx="2" stroke-dasharray="3 2"/>
+            <rect x="5" y="6.5" width="6" height="4" rx="1" fill="currentColor" stroke="none"/>
+          </svg>
+        </button>
         <button class="tool-btn" (click)="openImport()" title="Import">
           <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
             <path d="M8 1l4 4H9v5H7V5H4l4-4zM2 11v3h12v-3h-1.5v1.5h-9V11H2z"/>
@@ -212,6 +240,38 @@ import { ExportService } from '../../services/export.service';
       font-weight: 400;
       color: #8888aa;
     }
+    .swatch-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .swatch {
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      border: 2px solid #3a3a5c;
+      padding: 0;
+      cursor: pointer;
+      transition: transform 0.15s ease, border-color 0.15s ease;
+    }
+    .swatch:hover {
+      transform: scale(1.2);
+    }
+    .swatch.active {
+      border-color: #6c63ff;
+      box-shadow: 0 0 0 2px rgba(108, 99, 255, 0.3);
+    }
+    .swatch-default {
+      background: #f0f0f5;
+      position: relative;
+    }
+    .swatch-default::after {
+      content: '';
+      position: absolute;
+      inset: 3px;
+      border-radius: 50%;
+      border: 1px dashed #8888aa;
+    }
   `],
 })
 export class ToolbarComponent {
@@ -221,7 +281,32 @@ export class ToolbarComponent {
 
   importRequested = output<void>();
 
+  palette = NODE_PALETTE;
+
   zoomPercent = () => Math.round(this.graphService.viewportState().zoom * 100);
+
+  selectedColor = () => this.graphService.selectedNode()?.color ?? null;
+
+  setColor(color: string | null): void {
+    const selectedId = this.graphService.selectedNodeId();
+    if (!selectedId) return;
+    if ((this.graphService.selectedNode()?.color ?? null) === color) return;
+    this.historyService.execute(new SetNodeColorCommand(this.graphService, selectedId, color));
+  }
+
+  addGroup(): void {
+    // Center the new Group in the Viewport (canvas area, not the window —
+    // the toolbar overlaps the top of the window)
+    const canvasRect = document.querySelector('.canvas-container')?.getBoundingClientRect();
+    const screenCenterX = canvasRect ? canvasRect.width / 2 : window.innerWidth / 2;
+    const screenCenterY = canvasRect ? canvasRect.height / 2 : window.innerHeight / 2;
+    const vp = this.graphService.viewportState();
+    const centerX = (screenCenterX - vp.panX) / vp.zoom;
+    const centerY = (screenCenterY - vp.panY) / vp.zoom;
+    this.historyService.execute(
+      new CreateGroupCommand(this.graphService, 'New Group', centerX - 160, centerY - 100)
+    );
+  }
 
   zoomIn(): void {
     this.graphService.zoomBy(0.1, 0, 0);

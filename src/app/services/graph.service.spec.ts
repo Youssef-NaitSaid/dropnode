@@ -1,6 +1,6 @@
 import { TestBed } from '@angular/core/testing';
 import { GraphService } from './graph.service';
-import { GraphNode, HandleSide } from '../models/node';
+import { GraphNode, HandleSide, NODE_PALETTE } from '../models/node';
 import { Connection } from '../models/connection';
 import { GraphState } from '../models/graph-state';
 
@@ -530,6 +530,316 @@ describe('GraphService', () => {
       expect(service.connections().length).toBe(0);
       expect(service.selectedNodeId()).toBeNull();
       expect(service.nodeCount()).toBe(0);
+    });
+  });
+
+  describe('createGroup', () => {
+    it('creates a Group with kind group, node id pattern, and default size', () => {
+      const group = service.createGroup('New Group', 100, 200);
+
+      expect(group.id).toMatch(/^node_\d+_\d+$/);
+      expect(group.kind).toBe('group');
+      expect(group.label).toBe('New Group');
+      expect(group.x).toBe(100);
+      expect(group.y).toBe(200);
+      expect(group.width).toBe(320);
+      expect(group.height).toBe(200);
+      expect(service.nodes().length).toBe(1);
+    });
+  });
+
+  describe('setNodeParent', () => {
+    it('makes a node a child of a Group and releases it with null', () => {
+      const group = service.createGroup('G', 0, 0);
+      const node = service.createNode('N', 50, 50);
+
+      service.setNodeParent(node.id, group.id);
+      expect(service.nodes().find(n => n.id === node.id)?.parentId).toBe(group.id);
+
+      service.setNodeParent(node.id, null);
+      expect(service.nodes().find(n => n.id === node.id)?.parentId).toBeUndefined();
+    });
+
+    it('throws for an unknown node id', () => {
+      expect(() => service.setNodeParent('missing', null)).toThrow('Node missing not found');
+    });
+
+    it('throws when the parent is not a Group', () => {
+      const a = service.createNode('A', 0, 0);
+      const b = service.createNode('B', 100, 100);
+
+      expect(() => service.setNodeParent(a.id, b.id)).toThrow(`Parent ${b.id} is not a Group`);
+    });
+
+    it('throws when trying to parent a Group', () => {
+      const g1 = service.createGroup('G1', 0, 0);
+      const g2 = service.createGroup('G2', 500, 500);
+
+      expect(() => service.setNodeParent(g1.id, g2.id)).toThrow('A Group cannot have a parent');
+    });
+  });
+
+  describe('childrenOf', () => {
+    it('returns only the direct children of a Group', () => {
+      const group = service.createGroup('G', 0, 0);
+      const inside = service.createNode('In', 50, 50);
+      service.createNode('Out', 900, 900);
+      service.setNodeParent(inside.id, group.id);
+
+      const children = service.childrenOf(group.id);
+      expect(children.map(c => c.id)).toEqual([inside.id]);
+    });
+  });
+
+  describe('createConnection Group/child ban', () => {
+    it('returns null when connecting a Group to its own child', () => {
+      const group = service.createGroup('G', 0, 0);
+      const child = service.createNode('C', 50, 50);
+      service.setNodeParent(child.id, group.id);
+
+      expect(service.createConnection(group.id, 'right', child.id, 'left')).toBeNull();
+      expect(service.createConnection(child.id, 'right', group.id, 'left')).toBeNull();
+      expect(service.connections().length).toBe(0);
+    });
+
+    it('allows a Group to connect to a non-child node', () => {
+      const group = service.createGroup('G', 0, 0);
+      const outside = service.createNode('O', 900, 900);
+
+      expect(service.createConnection(group.id, 'right', outside.id, 'left')).not.toBeNull();
+    });
+
+    it('allows a child to connect to a different Group', () => {
+      const g1 = service.createGroup('G1', 0, 0);
+      const g2 = service.createGroup('G2', 800, 0);
+      const child = service.createNode('C', 50, 50);
+      service.setNodeParent(child.id, g1.id);
+
+      expect(service.createConnection(child.id, 'right', g2.id, 'left')).not.toBeNull();
+    });
+  });
+
+  describe('findGroupAt', () => {
+    it('returns the Group whose bounds contain the point', () => {
+      const group = service.createGroup('G', 100, 100); // 320x200 -> 100..420, 100..300
+      service.createNode('N', 900, 900);
+
+      expect(service.findGroupAt(200, 200)?.id).toBe(group.id);
+      expect(service.findGroupAt(50, 50)).toBeNull();
+    });
+
+    it('never returns a regular node', () => {
+      service.createNode('N', 0, 0); // 160x48
+
+      expect(service.findGroupAt(10, 10)).toBeNull();
+    });
+
+    it('returns the topmost (later in array) of overlapping Groups', () => {
+      service.createGroup('Under', 0, 0);
+      const top = service.createGroup('Over', 100, 100);
+
+      expect(service.findGroupAt(150, 150)?.id).toBe(top.id);
+    });
+
+    it('excludes the given node id', () => {
+      const group = service.createGroup('G', 0, 0);
+
+      expect(service.findGroupAt(10, 10, group.id)).toBeNull();
+    });
+  });
+
+  describe('moveGroup', () => {
+    it('moves the Group and shifts its children by the same delta', () => {
+      const group = service.createGroup('G', 100, 100);
+      const child = service.createNode('C', 150, 150);
+      const outside = service.createNode('O', 900, 900);
+      service.setNodeParent(child.id, group.id);
+
+      service.moveGroup(group.id, 300, 250);
+
+      expect(service.nodes().find(n => n.id === group.id)).toMatchObject({ x: 300, y: 250 });
+      expect(service.nodes().find(n => n.id === child.id)).toMatchObject({ x: 350, y: 300 });
+      expect(service.nodes().find(n => n.id === outside.id)).toMatchObject({ x: 900, y: 900 });
+    });
+  });
+
+  describe('deleteNode with Groups', () => {
+    it('releases children in place when a Group is deleted', () => {
+      const group = service.createGroup('G', 0, 0);
+      const child = service.createNode('C', 50, 50);
+      service.setNodeParent(child.id, group.id);
+
+      const result = service.deleteNode(group.id);
+
+      const released = service.nodes().find(n => n.id === child.id);
+      expect(released?.parentId).toBeUndefined();
+      expect(released).toMatchObject({ x: 50, y: 50 });
+      expect(result.releasedChildIds).toEqual([child.id]);
+    });
+
+    it('reports no released children for a regular node', () => {
+      const node = service.createNode('N', 0, 0);
+
+      expect(service.deleteNode(node.id).releasedChildIds).toEqual([]);
+    });
+  });
+
+  describe('resizeNode', () => {
+    it('applies the requested rect to a regular node', () => {
+      const node = service.createNode('N', 10, 20);
+
+      const applied = service.resizeNode(node.id, { x: 10, y: 20, width: 300, height: 90 });
+
+      expect(applied).toEqual({ x: 10, y: 20, width: 300, height: 90 });
+      expect(service.nodes().find(n => n.id === node.id)).toMatchObject({ x: 10, y: 20, width: 300, height: 90 });
+    });
+
+    it('clamps a Group so it always contains its children plus padding', () => {
+      const group = service.createGroup('G', 0, 0, 400, 300);
+      const child = service.createNode('C', 200, 150, 160, 48);
+      service.setNodeParent(child.id, group.id);
+
+      // Try to shrink the bottom-right corner past the child (child spans 200..360 x, 150..198 y)
+      const applied = service.resizeNode(group.id, { x: 0, y: 0, width: 150, height: 100 });
+
+      expect(applied.width).toBe(360 + 16); // child right edge + padding
+      expect(applied.height).toBe(198 + 16); // child bottom edge + padding
+    });
+
+    it('clamps the Group top-left edges against its children', () => {
+      const group = service.createGroup('G', 0, 0, 400, 300);
+      const child = service.createNode('C', 50, 50, 160, 48);
+      service.setNodeParent(child.id, group.id);
+
+      // Try to drag the top-left corner inward past the child
+      const applied = service.resizeNode(group.id, { x: 100, y: 100, width: 300, height: 200 });
+
+      expect(applied.x).toBe(50 - 16);
+      expect(applied.y).toBe(50 - 16);
+      expect(applied.x + applied.width).toBe(400);
+      expect(applied.y + applied.height).toBe(300);
+    });
+
+    it('does not change membership when a Group is resized', () => {
+      const group = service.createGroup('G', 0, 0, 400, 300);
+      const child = service.createNode('C', 200, 150);
+      service.setNodeParent(child.id, group.id);
+
+      service.resizeNode(group.id, { x: 0, y: 0, width: 100, height: 80 });
+
+      expect(service.nodes().find(n => n.id === child.id)?.parentId).toBe(group.id);
+    });
+
+    it('throws for an unknown node id', () => {
+      expect(() => service.resizeNode('missing', { x: 0, y: 0, width: 100, height: 50 }))
+        .toThrow('Node missing not found');
+    });
+  });
+
+  describe('setNodeColor', () => {
+    it('sets a palette color and clears it with null', () => {
+      const node = service.createNode('N', 0, 0);
+
+      service.setNodeColor(node.id, NODE_PALETTE[0]);
+      expect(service.nodes().find(n => n.id === node.id)?.color).toBe(NODE_PALETTE[0]);
+
+      service.setNodeColor(node.id, null);
+      expect(service.nodes().find(n => n.id === node.id)?.color).toBeUndefined();
+    });
+  });
+
+  describe('import validation for Groups and colors', () => {
+    const baseNode = (over: Record<string, unknown>) => ({
+      id: 'a', label: 'A', x: 0, y: 0, width: 160, height: 48, ...over,
+    });
+    const group = (over: Record<string, unknown>) => ({
+      id: 'g', label: 'G', x: 0, y: 0, width: 320, height: 200, kind: 'group', ...over,
+    });
+
+    it('accepts a valid payload with a Group, a child, and a palette color', () => {
+      const result = service.importGraph({
+        nodes: [
+          group({}),
+          baseNode({ parentId: 'g', color: NODE_PALETTE[2] }),
+        ],
+        connections: [],
+      } as GraphState);
+
+      expect(result.success).toBe(true);
+      expect(service.nodes().find(n => n.id === 'a')?.parentId).toBe('g');
+    });
+
+    it('rejects an unknown kind value', () => {
+      const result = service.importGraph({
+        nodes: [baseNode({ kind: 'frame' })],
+        connections: [],
+      } as unknown as GraphState);
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBe("Invalid node a: kind must be 'group'");
+    });
+
+    it('rejects a color outside the palette', () => {
+      const result = service.importGraph({
+        nodes: [baseNode({ color: '#123456' })],
+        connections: [],
+      } as GraphState);
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('Invalid node a: color must be a palette color');
+    });
+
+    it('rejects a parentId referencing a non-existent node', () => {
+      const result = service.importGraph({
+        nodes: [baseNode({ parentId: 'ghost' })],
+        connections: [],
+      } as GraphState);
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('Invalid node a: parentId references non-existent node');
+    });
+
+    it('rejects a parentId referencing a regular node', () => {
+      const result = service.importGraph({
+        nodes: [baseNode({ id: 'b' }), baseNode({ parentId: 'b' })],
+        connections: [],
+      } as GraphState);
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('Invalid node a: parentId must reference a Group');
+    });
+
+    it('rejects a Group carrying a parentId', () => {
+      const result = service.importGraph({
+        nodes: [group({}), group({ id: 'g2', parentId: 'g' })],
+        connections: [],
+      } as GraphState);
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('Invalid node g2: a Group cannot have a parentId');
+    });
+
+    it('rejects a Connection linking a Group to its own child', () => {
+      const result = service.importGraph({
+        nodes: [group({}), baseNode({ parentId: 'g' })],
+        connections: [
+          { id: 'c1', sourceNodeId: 'g', sourceHandle: 'right', targetNodeId: 'a', targetHandle: 'left' },
+        ],
+      } as GraphState);
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('Invalid connection c1: connects a Group to its own child');
+    });
+
+    it('keeps existing state untouched when the new rules reject a payload', () => {
+      const keep = service.createNode('Keep', 0, 0);
+
+      service.importGraph({
+        nodes: [baseNode({ color: 'red' })],
+        connections: [],
+      } as GraphState);
+
+      expect(service.nodes().map(n => n.id)).toEqual([keep.id]);
     });
   });
 });

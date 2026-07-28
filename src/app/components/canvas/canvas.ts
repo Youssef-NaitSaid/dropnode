@@ -1,5 +1,5 @@
 import {
-  Component, inject, signal, ChangeDetectionStrategy,
+  Component, inject, signal, computed, ChangeDetectionStrategy,
   HostListener, ElementRef, viewChild,
 } from '@angular/core';
 import { GraphService } from '../../services/graph.service';
@@ -7,11 +7,16 @@ import { HistoryService } from '../../services/history.service';
 import {
   CreateNodeCommand,
   MoveNodeCommand,
+  MoveGroupCommand,
   RenameNodeCommand,
+  ResizeNodeCommand,
+  ChangeParentCommand,
+  CompoundCommand,
   CreateConnectionCommand,
   DeleteConnectionCommand,
+  NodeRect,
 } from '../../services/commands';
-import { NodeComponent } from '../node/node';
+import { NodeComponent, GripCorner } from '../node/node';
 import { ConnectionLayerComponent } from '../connection-layer/connection-layer';
 import { HandleSide } from '../../models/node';
 
@@ -35,7 +40,7 @@ import { HandleSide } from '../../models/node';
         <app-connection-layer #connectionLayer (connectionDelete)="onConnectionDelete($event)" />
 
         <div class="nodes-container">
-          @for (node of graphService.nodes(); track node.id) {
+          @for (node of orderedNodes(); track node.id) {
             <app-node
               [node]="node"
               [isSelected]="graphService.selectedNodeId() === node.id"
@@ -44,6 +49,8 @@ import { HandleSide } from '../../models/node';
               (rename)="onNodeRename($event)"
               (handleDragStart)="onHandleDragStart($event)"
               (sizeChanged)="onNodeSizeChanged($event)"
+              (startResize)="onNodeStartResize($event)"
+              (createChild)="onCreateChild($event)"
             />
           }
         </div>
@@ -88,6 +95,12 @@ export class CanvasComponent {
 
   private connectionLayer = viewChild<ConnectionLayerComponent>('connectionLayer');
 
+  // Groups render beneath regular nodes so children stay on top
+  orderedNodes = computed(() => {
+    const nodes = this.graphService.nodes();
+    return [...nodes.filter(n => n.kind === 'group'), ...nodes.filter(n => n.kind !== 'group')];
+  });
+
   // Node drag state
   private isDraggingNode = false;
   private dragNodeId: string | null = null;
@@ -96,6 +109,17 @@ export class CanvasComponent {
   private dragNodeStartX = 0;
   private dragNodeStartY = 0;
   private hasMoved = false;
+  private dragIsGroup = false;
+
+  // Resize drag state
+  private isResizingNode = false;
+  private resizeNodeId: string | null = null;
+  private resizeCorner: GripCorner | null = null;
+  private resizeAnchorX = 0;
+  private resizeAnchorY = 0;
+  private resizeMinWidth = 120;
+  private resizeMinHeight = 48;
+  private resizeStartRect: NodeRect | null = null;
 
   // Pan state
   protected isPanning = false;
@@ -124,6 +148,13 @@ export class CanvasComponent {
       x: (screenX - vp.panX) / vp.zoom,
       y: (screenY - vp.panY) / vp.zoom,
     };
+  }
+
+  private clientPointToCanvas(clientX: number, clientY: number): { x: number; y: number } | null {
+    const container = document.querySelector('.canvas-container');
+    if (!container) return null;
+    const rect = container.getBoundingClientRect();
+    return this.screenToCanvas(clientX - rect.left, clientY - rect.top);
   }
 
   onCanvasDoubleClick(event: MouseEvent): void {
@@ -170,9 +201,27 @@ export class CanvasComponent {
     if (node) {
       this.dragNodeStartX = node.x;
       this.dragNodeStartY = node.y;
+      this.dragIsGroup = node.kind === 'group';
     }
     this.hasMoved = false;
     this.graphService.selectNode(event.nodeId);
+  }
+
+  // Resize grip drag start
+  onNodeStartResize(event: {
+    nodeId: string; corner: GripCorner; minWidth: number; minHeight: number; event: MouseEvent;
+  }): void {
+    const node = this.graphService.nodes().find(n => n.id === event.nodeId);
+    if (!node) return;
+    this.isResizingNode = true;
+    this.resizeNodeId = event.nodeId;
+    this.resizeCorner = event.corner;
+    this.resizeMinWidth = event.minWidth;
+    this.resizeMinHeight = event.minHeight;
+    this.resizeStartRect = { x: node.x, y: node.y, width: node.width, height: node.height };
+    // The opposite corner stays anchored during the drag
+    this.resizeAnchorX = event.corner === 'nw' || event.corner === 'sw' ? node.x + node.width : node.x;
+    this.resizeAnchorY = event.corner === 'nw' || event.corner === 'ne' ? node.y + node.height : node.y;
   }
 
   // Handle drag start (connection creation)
@@ -201,7 +250,30 @@ export class CanvasComponent {
 
       const newX = this.dragNodeStartX + dx;
       const newY = this.dragNodeStartY + dy;
-      this.graphService.updateNodePosition(this.dragNodeId, newX, newY);
+      if (this.dragIsGroup) {
+        // Rigid move: children follow the Group, still bypassing History
+        this.graphService.moveGroup(this.dragNodeId, newX, newY);
+      } else {
+        this.graphService.updateNodePosition(this.dragNodeId, newX, newY);
+      }
+    }
+
+    if (this.isResizingNode && this.resizeNodeId && this.resizeCorner) {
+      const cursor = this.clientPointToCanvas(event.clientX, event.clientY);
+      if (cursor) {
+        const width = Math.max(this.resizeMinWidth, Math.abs(cursor.x - this.resizeAnchorX));
+        const height = Math.max(this.resizeMinHeight, Math.abs(cursor.y - this.resizeAnchorY));
+        const west = this.resizeCorner === 'nw' || this.resizeCorner === 'sw';
+        const north = this.resizeCorner === 'nw' || this.resizeCorner === 'ne';
+        const rect: NodeRect = {
+          x: west ? this.resizeAnchorX - width : this.resizeAnchorX,
+          y: north ? this.resizeAnchorY - height : this.resizeAnchorY,
+          width,
+          height,
+        };
+        // Transient: the service clamps Groups around their children
+        this.graphService.resizeNode(this.resizeNodeId, rect);
+      }
     }
 
     if (this.isPanning) {
@@ -214,12 +286,8 @@ export class CanvasComponent {
     }
 
     if (this.isDraggingConnection) {
-      const container = document.querySelector('.canvas-container');
-      if (!container) return;
-      const rect = container.getBoundingClientRect();
-      const screenX = event.clientX - rect.left;
-      const screenY = event.clientY - rect.top;
-      const canvasPos = this.screenToCanvas(screenX, screenY);
+      const canvasPos = this.clientPointToCanvas(event.clientX, event.clientY);
+      if (!canvasPos) return;
 
       const layer = this.connectionLayer();
       if (layer) {
@@ -233,10 +301,9 @@ export class CanvasComponent {
     // Finish node drag — record undo command
     if (this.isDraggingNode && this.dragNodeId && this.hasMoved) {
       const node = this.graphService.nodes().find(n => n.id === this.dragNodeId);
-      if (node) {
-        // Node is already at the new position. We create a MoveNodeCommand with
-        // explicit original coordinates so undo restores the drag-start position.
-        const cmd = new MoveNodeCommand(
+      if (node && this.dragIsGroup) {
+        // A Group drag moved its children rigidly; one undo step for all of it
+        const cmd = new MoveGroupCommand(
           this.graphService,
           this.dragNodeId,
           node.x,
@@ -244,13 +311,80 @@ export class CanvasComponent {
           this.dragNodeStartX,
           this.dragNodeStartY,
         );
-        // Push to history without re-executing via pushWithoutExecute (node is already at target position)
         this.historyService.pushWithoutExecute(cmd);
+      } else if (node) {
+        // Node is already at the new position. Membership follows containment:
+        // the topmost Group under the node's center claims it on drop.
+        const targetGroup = this.graphService.findGroupAt(
+          node.x + node.width / 2,
+          node.y + node.height / 2,
+          node.id,
+        );
+        const newParentId = targetGroup?.id ?? null;
+        const oldParentId = node.parentId ?? null;
+
+        const moveCmd = new MoveNodeCommand(
+          this.graphService,
+          this.dragNodeId,
+          node.x,
+          node.y,
+          this.dragNodeStartX,
+          this.dragNodeStartY,
+        );
+
+        if (newParentId === oldParentId) {
+          this.historyService.pushWithoutExecute(moveCmd);
+        } else {
+          // Entering a Group severs any Connections to it (sever-on-entry),
+          // all one compound undo step with the move and the membership change
+          const severCmds = newParentId === null ? [] : this.graphService.connections()
+            .filter(c =>
+              (c.sourceNodeId === node.id && c.targetNodeId === newParentId) ||
+              (c.sourceNodeId === newParentId && c.targetNodeId === node.id)
+            )
+            .map(c => new DeleteConnectionCommand(this.graphService, c.id));
+          const parentCmd = new ChangeParentCommand(this.graphService, node.id, newParentId);
+
+          // The move already happened transiently; apply the remaining parts,
+          // then push the compound without re-executing
+          severCmds.forEach(c => c.execute());
+          parentCmd.execute();
+          this.historyService.pushWithoutExecute(
+            new CompoundCommand('Move Node', [moveCmd, ...severCmds, parentCmd])
+          );
+        }
       }
     }
     this.isDraggingNode = false;
     this.dragNodeId = null;
     this.hasMoved = false;
+    this.dragIsGroup = false;
+
+    // Finish resize drag — one undo step, only if the final rect actually changed
+    if (this.isResizingNode && this.resizeNodeId) {
+      const start = this.resizeStartRect;
+      const node = this.graphService.nodes().find(n => n.id === this.resizeNodeId);
+      if (start && node) {
+        const changed =
+          Math.abs(node.width - start.width) > 2 ||
+          Math.abs(node.height - start.height) > 2 ||
+          Math.abs(node.x - start.x) > 2 ||
+          Math.abs(node.y - start.y) > 2;
+        if (changed) {
+          const cmd = new ResizeNodeCommand(
+            this.graphService,
+            this.resizeNodeId,
+            { x: node.x, y: node.y, width: node.width, height: node.height },
+            start,
+          );
+          this.historyService.pushWithoutExecute(cmd);
+        }
+      }
+      this.isResizingNode = false;
+      this.resizeNodeId = null;
+      this.resizeCorner = null;
+      this.resizeStartRect = null;
+    }
 
     if (this.isPanning) {
       this.isPanning = false;
@@ -280,6 +414,17 @@ export class CanvasComponent {
 
   onNodeRename(event: { nodeId: string; newLabel: string }): void {
     const cmd = new RenameNodeCommand(this.graphService, event.nodeId, event.newLabel);
+    this.historyService.execute(cmd);
+  }
+
+  // Double-click on a Group's body creates a child node at the cursor
+  onCreateChild(event: { parentId: string; clientX: number; clientY: number }): void {
+    const canvasPos = this.clientPointToCanvas(event.clientX, event.clientY);
+    if (!canvasPos) return;
+
+    const cmd = new CreateNodeCommand(
+      this.graphService, 'New Node', canvasPos.x - 60, canvasPos.y - 24, event.parentId,
+    );
     this.historyService.execute(cmd);
   }
 

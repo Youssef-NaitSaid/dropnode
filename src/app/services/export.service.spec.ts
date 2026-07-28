@@ -1,6 +1,7 @@
 import { TestBed } from '@angular/core/testing';
 import { ExportService } from './export.service';
 import { GraphService } from './graph.service';
+import { NODE_PALETTE } from '../models/node';
 import { ToastService } from '../components/toast/toast';
 
 describe('ExportService', () => {
@@ -158,6 +159,50 @@ describe('ExportService', () => {
 
       expect(toastService.message()).toBe('Failed to copy link to clipboard');
       expect(toastService.type()).toBe('error');
+    });
+  });
+
+  describe('Group and color round-trip', () => {
+    it('kind, parentId, and color survive export and re-import', () => {
+      const group = graphService.createGroup('My Group', 0, 0);
+      const child = graphService.createNode('Child', 50, 50);
+      graphService.setNodeParent(child.id, group.id);
+      graphService.setNodeColor(child.id, NODE_PALETTE[4]);
+
+      const exported = graphService.exportGraph();
+      graphService.clearGraph();
+      const result = graphService.importGraph(exported);
+
+      expect(result.success).toBe(true);
+      const importedGroup = graphService.nodes().find(n => n.id === group.id);
+      const importedChild = graphService.nodes().find(n => n.id === child.id);
+      expect(importedGroup?.kind).toBe('group');
+      expect(importedChild?.parentId).toBe(group.id);
+      expect(importedChild?.color).toBe(NODE_PALETTE[4]);
+    });
+
+    it('payloads without the optional fields import as plain nodes', () => {
+      const result = graphService.importGraph({
+        nodes: [
+          { id: 'n1', label: 'Old', x: 0, y: 0, width: 160, height: 48 },
+        ],
+        connections: [],
+      });
+
+      expect(result.success).toBe(true);
+      const node = graphService.nodes()[0];
+      expect(node.kind).toBeUndefined();
+      expect(node.parentId).toBeUndefined();
+      expect(node.color).toBeUndefined();
+    });
+
+    it('exported Graph State is a copy: mutating it does not affect editor state', () => {
+      const group = graphService.createGroup('G', 0, 0);
+      const exported = graphService.exportGraph();
+
+      exported.nodes[0].label = 'Mutated';
+
+      expect(graphService.nodes().find(n => n.id === group.id)?.label).toBe('G');
     });
   });
 });

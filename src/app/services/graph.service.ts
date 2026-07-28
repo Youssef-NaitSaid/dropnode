@@ -1,11 +1,14 @@
 import { Injectable, signal, computed } from '@angular/core';
-import { GraphNode, HandleSide } from '../models/node';
+import { GraphNode, HandleSide, NODE_PALETTE } from '../models/node';
 import { Connection } from '../models/connection';
 import { GraphState } from '../models/graph-state';
 import { ViewportState } from '../models/viewport-state';
 
 @Injectable({ providedIn: 'root' })
 export class GraphService {
+  // Padding kept between a Group's edges and its children's bounding box
+  static readonly GROUP_CHILD_PADDING = 16;
+
   // Core state signals
   readonly nodes = signal<GraphNode[]>([]);
   readonly connections = signal<Connection[]>([]);
@@ -45,9 +48,125 @@ export class GraphService {
     );
   }
 
+  // Group operations
+  createGroup(label: string, x: number, y: number, width = 320, height = 200): GraphNode {
+    const group: GraphNode = {
+      id: this.generateId('node'),
+      label,
+      x,
+      y,
+      width,
+      height,
+      kind: 'group',
+    };
+    this.nodes.update(nodes => [...nodes, group]);
+    return group;
+  }
+
+  setNodeParent(id: string, parentId: string | null): void {
+    const node = this.nodes().find(n => n.id === id);
+    if (!node) throw new Error(`Node ${id} not found`);
+    if (parentId !== null) {
+      if (node.kind === 'group') throw new Error('A Group cannot have a parent');
+      const parent = this.nodes().find(n => n.id === parentId);
+      if (!parent || parent.kind !== 'group') {
+        throw new Error(`Parent ${parentId} is not a Group`);
+      }
+    }
+    this.nodes.update(nodes =>
+      nodes.map(n => {
+        if (n.id !== id) return n;
+        if (parentId === null) {
+          const { parentId: _removed, ...rest } = n;
+          return rest;
+        }
+        return { ...n, parentId };
+      })
+    );
+  }
+
+  childrenOf(groupId: string): GraphNode[] {
+    return this.nodes().filter(n => n.parentId === groupId);
+  }
+
+  // Topmost-rendered Group (later in the array) whose bounds contain the point
+  findGroupAt(x: number, y: number, excludeNodeId?: string): GraphNode | null {
+    const groups = this.nodes().filter(n =>
+      n.kind === 'group' &&
+      n.id !== excludeNodeId &&
+      x >= n.x && x <= n.x + n.width &&
+      y >= n.y && y <= n.y + n.height
+    );
+    return groups.length > 0 ? groups[groups.length - 1] : null;
+  }
+
+  // Rigid move: the Group and all its children shift by the same delta
+  moveGroup(id: string, x: number, y: number): void {
+    const group = this.nodes().find(n => n.id === id);
+    if (!group) return;
+    const dx = x - group.x;
+    const dy = y - group.y;
+    this.nodes.update(nodes =>
+      nodes.map(n => {
+        if (n.id === id) return { ...n, x, y };
+        if (n.parentId === id) return { ...n, x: n.x + dx, y: n.y + dy };
+        return n;
+      })
+    );
+  }
+
   updateNodeSize(id: string, width: number, height: number): void {
     this.nodes.update(nodes =>
       nodes.map(n => n.id === id ? { ...n, width, height } : n)
+    );
+  }
+
+  // Resize to the requested rect; a Group is clamped so it keeps containing
+  // its children plus padding. Returns the applied rect.
+  resizeNode(
+    id: string,
+    rect: { x: number; y: number; width: number; height: number },
+  ): { x: number; y: number; width: number; height: number } {
+    const node = this.nodes().find(n => n.id === id);
+    if (!node) throw new Error(`Node ${id} not found`);
+
+    let { x, y, width, height } = rect;
+
+    if (node.kind === 'group') {
+      const children = this.childrenOf(id);
+      if (children.length > 0) {
+        const pad = GraphService.GROUP_CHILD_PADDING;
+        const boundLeft = Math.min(...children.map(c => c.x)) - pad;
+        const boundTop = Math.min(...children.map(c => c.y)) - pad;
+        const boundRight = Math.max(...children.map(c => c.x + c.width)) + pad;
+        const boundBottom = Math.max(...children.map(c => c.y + c.height)) + pad;
+        const left = Math.min(x, boundLeft);
+        const top = Math.min(y, boundTop);
+        const right = Math.max(x + width, boundRight);
+        const bottom = Math.max(y + height, boundBottom);
+        x = left;
+        y = top;
+        width = right - left;
+        height = bottom - top;
+      }
+    }
+
+    this.nodes.update(nodes =>
+      nodes.map(n => n.id === id ? { ...n, x, y, width, height } : n)
+    );
+    return { x, y, width, height };
+  }
+
+  setNodeColor(id: string, color: string | null): void {
+    this.nodes.update(nodes =>
+      nodes.map(n => {
+        if (n.id !== id) return n;
+        if (color === null) {
+          const { color: _removed, ...rest } = n;
+          return rest;
+        }
+        return { ...n, color };
+      })
     );
   }
 
@@ -57,24 +176,36 @@ export class GraphService {
     );
   }
 
-  deleteNode(id: string): { node: GraphNode; removedConnections: Connection[] } {
+  deleteNode(id: string): { node: GraphNode; removedConnections: Connection[]; releasedChildIds: string[] } {
     const node = this.nodes().find(n => n.id === id);
     if (!node) throw new Error(`Node ${id} not found`);
 
     const removedConnections = this.connections().filter(
       c => c.sourceNodeId === id || c.targetNodeId === id
     );
+    // Deleting a Group releases its children in place
+    const releasedChildIds = this.nodes()
+      .filter(n => n.parentId === id)
+      .map(n => n.id);
 
     this.connections.update(conns =>
       conns.filter(c => c.sourceNodeId !== id && c.targetNodeId !== id)
     );
-    this.nodes.update(nodes => nodes.filter(n => n.id !== id));
+    this.nodes.update(nodes =>
+      nodes
+        .filter(n => n.id !== id)
+        .map(n => {
+          if (n.parentId !== id) return n;
+          const { parentId: _removed, ...rest } = n;
+          return rest;
+        })
+    );
 
     if (this.selectedNodeId() === id) {
       this.selectedNodeId.set(null);
     }
 
-    return { node, removedConnections };
+    return { node, removedConnections, releasedChildIds };
   }
 
   // Connection operations
@@ -86,6 +217,11 @@ export class GraphService {
   ): Connection | null {
     // Prevent self-connections
     if (sourceNodeId === targetNodeId) return null;
+
+    // Prevent connections between a Group and its own children
+    const source = this.nodes().find(n => n.id === sourceNodeId);
+    const target = this.nodes().find(n => n.id === targetNodeId);
+    if (source?.parentId === targetNodeId || target?.parentId === sourceNodeId) return null;
 
     // Prevent duplicate connections
     const exists = this.connections().some(
@@ -217,7 +353,37 @@ export class GraphService {
       if (typeof node['width'] !== 'number' || typeof node['height'] !== 'number') {
         return { valid: false, error: `Invalid node ${nodeId}: width and height must be numbers` };
       }
+      if (node['kind'] !== undefined && node['kind'] !== 'group') {
+        return { valid: false, error: `Invalid node ${nodeId}: kind must be 'group'` };
+      }
+      if (node['color'] !== undefined && !NODE_PALETTE.includes(node['color'] as string)) {
+        return { valid: false, error: `Invalid node ${nodeId}: color must be a palette color` };
+      }
       nodeIds.add(nodeId);
+    }
+
+    // parentId rules need the full node set, so they run as a second pass
+    const groupIds = new Set<string>();
+    const parentOf = new Map<string, string>();
+    for (const raw of nodesArr) {
+      const node = raw as Record<string, unknown>;
+      if (node['kind'] === 'group') groupIds.add(node['id'] as string);
+    }
+    for (const raw of nodesArr) {
+      const node = raw as Record<string, unknown>;
+      const nodeId = node['id'] as string;
+      const parentId = node['parentId'];
+      if (parentId === undefined) continue;
+      if (node['kind'] === 'group') {
+        return { valid: false, error: `Invalid node ${nodeId}: a Group cannot have a parentId` };
+      }
+      if (typeof parentId !== 'string' || !nodeIds.has(parentId)) {
+        return { valid: false, error: `Invalid node ${nodeId}: parentId references non-existent node` };
+      }
+      if (!groupIds.has(parentId)) {
+        return { valid: false, error: `Invalid node ${nodeId}: parentId must reference a Group` };
+      }
+      parentOf.set(nodeId, parentId);
     }
 
     for (let i = 0; i < connsArr.length; i++) {
@@ -240,6 +406,11 @@ export class GraphService {
       }
       if (!validHandles.includes(conn['targetHandle'] as HandleSide)) {
         return { valid: false, error: `Invalid connection ${connId}: invalid targetHandle` };
+      }
+      const sourceId = conn['sourceNodeId'] as string;
+      const targetId = conn['targetNodeId'] as string;
+      if (parentOf.get(sourceId) === targetId || parentOf.get(targetId) === sourceId) {
+        return { valid: false, error: `Invalid connection ${connId}: connects a Group to its own child` };
       }
     }
 

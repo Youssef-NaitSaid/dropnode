@@ -1,5 +1,6 @@
 import { TestBed } from '@angular/core/testing';
 import { GraphService } from './graph.service';
+import { NODE_PALETTE } from '../models/node';
 import {
   CreateNodeCommand,
   MoveNodeCommand,
@@ -7,6 +8,12 @@ import {
   DeleteNodeCommand,
   CreateConnectionCommand,
   DeleteConnectionCommand,
+  CreateGroupCommand,
+  ChangeParentCommand,
+  MoveGroupCommand,
+  ResizeNodeCommand,
+  SetNodeColorCommand,
+  CompoundCommand,
 } from './commands';
 
 describe('Commands', () => {
@@ -278,6 +285,183 @@ describe('Commands', () => {
       create2.undo();
       create1.undo();
       expect(graphService.nodes().length).toBe(0);
+    });
+  });
+
+  describe('CreateGroupCommand', () => {
+    it('execute creates a Group, undo removes it', () => {
+      const cmd = new CreateGroupCommand(graphService, 'New Group', 100, 100);
+
+      cmd.execute();
+      expect(graphService.nodes().length).toBe(1);
+      expect(graphService.nodes()[0].kind).toBe('group');
+
+      cmd.undo();
+      expect(graphService.nodes().length).toBe(0);
+    });
+  });
+
+  describe('CreateNodeCommand with parent', () => {
+    it('creates the node already parented to the Group', () => {
+      const group = graphService.createGroup('G', 0, 0);
+      const cmd = new CreateNodeCommand(graphService, 'Child', 50, 50, group.id);
+
+      cmd.execute();
+      const child = graphService.nodes().find(n => n.label === 'Child');
+      expect(child?.parentId).toBe(group.id);
+
+      cmd.undo();
+      expect(graphService.nodes().length).toBe(1);
+    });
+  });
+
+  describe('ChangeParentCommand', () => {
+    it('execute joins the Group, undo restores no parent', () => {
+      const group = graphService.createGroup('G', 0, 0);
+      const node = graphService.createNode('N', 50, 50);
+      const cmd = new ChangeParentCommand(graphService, node.id, group.id);
+
+      cmd.execute();
+      expect(graphService.nodes().find(n => n.id === node.id)?.parentId).toBe(group.id);
+
+      cmd.undo();
+      expect(graphService.nodes().find(n => n.id === node.id)?.parentId).toBeUndefined();
+    });
+
+    it('undo restores the previous Group', () => {
+      const g1 = graphService.createGroup('G1', 0, 0);
+      const g2 = graphService.createGroup('G2', 800, 0);
+      const node = graphService.createNode('N', 50, 50);
+      graphService.setNodeParent(node.id, g1.id);
+
+      const cmd = new ChangeParentCommand(graphService, node.id, g2.id);
+      cmd.execute();
+      expect(graphService.nodes().find(n => n.id === node.id)?.parentId).toBe(g2.id);
+
+      cmd.undo();
+      expect(graphService.nodes().find(n => n.id === node.id)?.parentId).toBe(g1.id);
+    });
+  });
+
+  describe('MoveGroupCommand', () => {
+    it('execute moves Group and children rigidly, undo restores both', () => {
+      const group = graphService.createGroup('G', 100, 100);
+      const child = graphService.createNode('C', 150, 150);
+      graphService.setNodeParent(child.id, group.id);
+
+      const cmd = new MoveGroupCommand(graphService, group.id, 300, 250, 100, 100);
+      cmd.execute();
+      expect(graphService.nodes().find(n => n.id === child.id)).toMatchObject({ x: 350, y: 300 });
+
+      cmd.undo();
+      expect(graphService.nodes().find(n => n.id === group.id)).toMatchObject({ x: 100, y: 100 });
+      expect(graphService.nodes().find(n => n.id === child.id)).toMatchObject({ x: 150, y: 150 });
+    });
+  });
+
+  describe('ResizeNodeCommand', () => {
+    it('execute applies the new rect, undo restores the original', () => {
+      const node = graphService.createNode('N', 10, 20);
+      const cmd = new ResizeNodeCommand(
+        graphService, node.id,
+        { x: 10, y: 20, width: 300, height: 90 },
+        { x: 10, y: 20, width: 160, height: 48 },
+      );
+
+      cmd.execute();
+      expect(graphService.nodes()[0]).toMatchObject({ width: 300, height: 90 });
+
+      cmd.undo();
+      expect(graphService.nodes()[0]).toMatchObject({ x: 10, y: 20, width: 160, height: 48 });
+    });
+  });
+
+  describe('SetNodeColorCommand', () => {
+    it('execute applies the color, undo restores the previous one', () => {
+      const node = graphService.createNode('N', 0, 0);
+      graphService.setNodeColor(node.id, NODE_PALETTE[1]);
+
+      const cmd = new SetNodeColorCommand(graphService, node.id, NODE_PALETTE[3]);
+      cmd.execute();
+      expect(graphService.nodes()[0].color).toBe(NODE_PALETTE[3]);
+
+      cmd.undo();
+      expect(graphService.nodes()[0].color).toBe(NODE_PALETTE[1]);
+    });
+
+    it('undo removes the color when there was none', () => {
+      const node = graphService.createNode('N', 0, 0);
+
+      const cmd = new SetNodeColorCommand(graphService, node.id, NODE_PALETTE[0]);
+      cmd.execute();
+      cmd.undo();
+
+      expect(graphService.nodes()[0].color).toBeUndefined();
+    });
+  });
+
+  describe('CompoundCommand', () => {
+    it('sever-on-entry: one undo restores position, membership, and Connections with original ids', () => {
+      const group = graphService.createGroup('G', 0, 0, 400, 300);
+      const node = graphService.createNode('N', 900, 900);
+      const conn = graphService.createConnection(node.id, 'left', group.id, 'right')!;
+
+      // Drop the connected node into the Group: move + sever + join as one step.
+      // The move already happened transiently; the other parts are executed
+      // before the compound is pushed without re-execution (canvas drop flow).
+      graphService.updateNodePosition(node.id, 100, 100);
+      const severPart = new DeleteConnectionCommand(graphService, conn.id);
+      const parentPart = new ChangeParentCommand(graphService, node.id, group.id);
+      const compound = new CompoundCommand('Move Node', [
+        new MoveNodeCommand(graphService, node.id, 100, 100, 900, 900),
+        severPart,
+        parentPart,
+      ]);
+      severPart.execute();
+      parentPart.execute();
+      // State now matches the compound's outcome; undo must reverse all of it
+      compound.undo();
+
+      const restored = graphService.nodes().find(n => n.id === node.id);
+      expect(restored).toMatchObject({ x: 900, y: 900 });
+      expect(restored?.parentId).toBeUndefined();
+      expect(graphService.connections().map(c => c.id)).toEqual([conn.id]);
+    });
+
+    it('redo after undo re-applies every part', () => {
+      const group = graphService.createGroup('G', 0, 0, 400, 300);
+      const node = graphService.createNode('N', 900, 900);
+      const conn = graphService.createConnection(node.id, 'left', group.id, 'right')!;
+
+      const compound = new CompoundCommand('Move Node', [
+        new MoveNodeCommand(graphService, node.id, 100, 100),
+        new DeleteConnectionCommand(graphService, conn.id),
+        new ChangeParentCommand(graphService, node.id, group.id),
+      ]);
+      compound.execute();
+      compound.undo();
+      compound.execute();
+
+      const moved = graphService.nodes().find(n => n.id === node.id);
+      expect(moved).toMatchObject({ x: 100, y: 100 });
+      expect(moved?.parentId).toBe(group.id);
+      expect(graphService.connections().length).toBe(0);
+    });
+  });
+
+  describe('DeleteNodeCommand with Groups', () => {
+    it('undo of a Group deletion restores membership of released children', () => {
+      const group = graphService.createGroup('G', 0, 0);
+      const child = graphService.createNode('C', 50, 50);
+      graphService.setNodeParent(child.id, group.id);
+
+      const cmd = new DeleteNodeCommand(graphService, group.id);
+      cmd.execute();
+      expect(graphService.nodes().find(n => n.id === child.id)?.parentId).toBeUndefined();
+
+      cmd.undo();
+      expect(graphService.nodes().find(n => n.id === group.id)).toBeDefined();
+      expect(graphService.nodes().find(n => n.id === child.id)?.parentId).toBe(group.id);
     });
   });
 });
