@@ -313,7 +313,9 @@ export class GraphService {
     };
   }
 
-  private validateGraphState(state: unknown): { valid: boolean; error?: string } {
+  // Public so collection import can validate each project's graph with the
+  // exact same rules — never re-implement this validation elsewhere.
+  validateGraphState(state: unknown): { valid: boolean; error?: string } {
     if (!state || typeof state !== 'object') {
       return { valid: false, error: 'Invalid graph state: not an object' };
     }

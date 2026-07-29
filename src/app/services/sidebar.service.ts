@@ -1,7 +1,10 @@
 import { Injectable, signal, type Signal } from '@angular/core';
 
-/** Namespaced key — dropnode's only use of browser storage. */
+/** Namespaced key — the Sidebar's collapsed/expanded rail state. */
 export const SIDEBAR_STORAGE_KEY = 'dropnode:sidebar-collapsed';
+
+/** Namespaced key — which Collections are collapsed in the Sidebar tree. */
+export const SIDEBAR_COLLAPSED_COLLECTIONS_KEY = 'dropnode:sidebar-collapsed-collections';
 
 /**
  * Owns the Sidebar's collapsed/expanded state and persists it to localStorage.
@@ -22,6 +25,43 @@ export class SidebarService {
   setCollapsed(collapsed: boolean): void {
     this._collapsed.set(collapsed);
     this.persist(collapsed);
+  }
+
+  // ── Per-Collection expand/collapse (default expanded) ────────────
+
+  private readonly _collapsedCollections = signal<ReadonlySet<string>>(
+    this.readCollapsedCollections()
+  );
+
+  isCollectionCollapsed(collectionId: string): boolean {
+    return this._collapsedCollections().has(collectionId);
+  }
+
+  toggleCollection(collectionId: string): void {
+    const next = new Set(this._collapsedCollections());
+    if (next.has(collectionId)) {
+      next.delete(collectionId);
+    } else {
+      next.add(collectionId);
+    }
+    this._collapsedCollections.set(next);
+    try {
+      localStorage.setItem(SIDEBAR_COLLAPSED_COLLECTIONS_KEY, JSON.stringify([...next]));
+    } catch {
+      // Storage unavailable — state still works in-memory.
+    }
+  }
+
+  private readCollapsedCollections(): Set<string> {
+    try {
+      const raw = localStorage.getItem(SIDEBAR_COLLAPSED_COLLECTIONS_KEY);
+      const parsed: unknown = raw ? JSON.parse(raw) : [];
+      return Array.isArray(parsed)
+        ? new Set(parsed.filter((id): id is string => typeof id === 'string'))
+        : new Set();
+    } catch {
+      return new Set();
+    }
   }
 
   /** Read the stored preference; any missing or malformed value means expanded. */

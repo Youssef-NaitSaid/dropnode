@@ -1,18 +1,22 @@
 import { TestBed } from '@angular/core/testing';
 import { ExportService } from './export.service';
 import { GraphService } from './graph.service';
+import { CollectionService } from './collection.service';
 import { NODE_PALETTE } from '../models/node';
 import { ToastService } from '../components/toast/toast';
 
 describe('ExportService', () => {
   let service: ExportService;
   let graphService: GraphService;
+  let collectionService: CollectionService;
   let toastService: ToastService;
 
   beforeEach(() => {
+    localStorage.clear();
     TestBed.configureTestingModule({});
     service = TestBed.inject(ExportService);
     graphService = TestBed.inject(GraphService);
+    collectionService = TestBed.inject(CollectionService);
     toastService = TestBed.inject(ToastService);
   });
 
@@ -159,6 +163,102 @@ describe('ExportService', () => {
 
       expect(toastService.message()).toBe('Failed to copy link to clipboard');
       expect(toastService.type()).toBe('error');
+    });
+  });
+
+  describe('project and collection export (from the store, not the editor)', () => {
+    let capturedBlob: Blob | null;
+    let clickedAnchor: HTMLAnchorElement | null;
+    let clickSpy: ReturnType<typeof vi.spyOn>;
+
+    const storedGraph = () => ({
+      nodes: [{ id: 'node_9_9', label: 'Stored', x: 1, y: 2, width: 160, height: 48 }],
+      connections: [],
+    });
+
+    beforeEach(() => {
+      capturedBlob = null;
+      clickedAnchor = null;
+      URL.createObjectURL = vi.fn((blob: Blob) => {
+        capturedBlob = blob;
+        return 'blob:mock-url';
+      }) as typeof URL.createObjectURL;
+      URL.revokeObjectURL = vi.fn() as typeof URL.revokeObjectURL;
+      clickSpy = vi
+        .spyOn(HTMLAnchorElement.prototype, 'click')
+        .mockImplementation(function (this: HTMLAnchorElement) {
+          clickedAnchor = this;
+        });
+    });
+
+    afterEach(() => {
+      clickSpy.mockRestore();
+      vi.unstubAllGlobals();
+    });
+
+    it('exportProjectToFile downloads the stored graph named after the project, slugged', async () => {
+      const col = collectionService.createCollection('C');
+      const proj = collectionService.createProject(col.id, 'Onboarding Flow!', storedGraph());
+      // The editor holds a different graph — the export must read the store.
+      graphService.createNode('Editor-only', 0, 0);
+
+      service.exportProjectToFile(proj.id);
+
+      expect(clickedAnchor?.download).toBe('onboarding-flow.json');
+      const text = await capturedBlob!.text();
+      expect(JSON.parse(text)).toEqual(storedGraph());
+      expect(toastService.type()).toBe('success');
+    });
+
+    it('falls back to a default filename when the name slugs to nothing', () => {
+      const col = collectionService.createCollection('C');
+      const proj = collectionService.createProject(col.id, '???');
+
+      service.exportProjectToFile(proj.id);
+
+      expect(clickedAnchor?.download).toBe('project.json');
+    });
+
+    it('copyProjectJson writes the stored graph to the clipboard', async () => {
+      const col = collectionService.createCollection('C');
+      const proj = collectionService.createProject(col.id, 'P', storedGraph());
+      const writeText = vi.fn().mockResolvedValue(undefined);
+      vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } });
+
+      await service.copyProjectJson(proj.id);
+
+      expect(JSON.parse(writeText.mock.calls[0][0])).toEqual(storedGraph());
+      expect(toastService.type()).toBe('success');
+    });
+
+    it('copyProjectLink produces a root share link carrying the stored graph', async () => {
+      const col = collectionService.createCollection('C');
+      const proj = collectionService.createProject(col.id, 'P', storedGraph());
+      const writeText = vi.fn().mockResolvedValue(undefined);
+      vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } });
+
+      await service.copyProjectLink(proj.id);
+
+      const link = writeText.mock.calls[0][0] as string;
+      const url = new URL(link);
+      expect(url.pathname).toBe('/');
+      expect(JSON.parse(decodeURIComponent(url.searchParams.get('data')!))).toEqual(storedGraph());
+    });
+
+    it('exportCollectionToFile downloads the envelope named after the collection', async () => {
+      const col = collectionService.createCollection('Client Work');
+      collectionService.createProject(col.id, 'P1', storedGraph());
+
+      service.exportCollectionToFile(col.id);
+
+      expect(clickedAnchor?.download).toBe('client-work.dropnode-collection.json');
+      const text = await capturedBlob!.text();
+      expect(JSON.parse(text)).toEqual({
+        name: 'Client Work',
+        projects: [{ name: 'P1', graph: storedGraph() }],
+      });
+      expect(toastService.message()).toBe('Collection exported to file');
+      expect(toastService.type()).toBe('success');
     });
   });
 

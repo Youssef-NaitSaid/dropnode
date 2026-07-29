@@ -1,5 +1,9 @@
 import { TestBed } from '@angular/core/testing';
-import { SidebarService, SIDEBAR_STORAGE_KEY } from './sidebar.service';
+import {
+  SidebarService,
+  SIDEBAR_STORAGE_KEY,
+  SIDEBAR_COLLAPSED_COLLECTIONS_KEY,
+} from './sidebar.service';
 
 describe('SidebarService', () => {
   // A fresh singleton per call so the constructor re-reads localStorage,
@@ -83,6 +87,42 @@ describe('SidebarService', () => {
 
       const service = freshService();
       expect(service.collapsed()).toBe(false);
+    });
+  });
+
+  describe('collection expand/collapse', () => {
+    it('every collection is expanded by default', () => {
+      const service = freshService();
+      expect(service.isCollectionCollapsed('col_1')).toBe(false);
+    });
+
+    it('toggling collapses and re-expands a collection', () => {
+      const service = freshService();
+
+      service.toggleCollection('col_1');
+      expect(service.isCollectionCollapsed('col_1')).toBe(true);
+      expect(service.isCollectionCollapsed('col_2')).toBe(false);
+
+      service.toggleCollection('col_1');
+      expect(service.isCollectionCollapsed('col_1')).toBe(false);
+    });
+
+    it('persists collapsed collections across a reload', () => {
+      const first = freshService();
+      first.toggleCollection('col_1');
+      first.toggleCollection('col_2');
+      first.toggleCollection('col_2');
+
+      const second = freshService();
+      expect(second.isCollectionCollapsed('col_1')).toBe(true);
+      expect(second.isCollectionCollapsed('col_2')).toBe(false);
+    });
+
+    it('tolerates a malformed stored value by expanding everything', () => {
+      localStorage.setItem(SIDEBAR_COLLAPSED_COLLECTIONS_KEY, '{oops');
+
+      const service = freshService();
+      expect(service.isCollectionCollapsed('col_1')).toBe(false);
     });
   });
 });

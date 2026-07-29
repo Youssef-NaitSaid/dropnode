@@ -1,22 +1,20 @@
-import { Component, inject, OnInit, ChangeDetectionStrategy, viewChild } from '@angular/core';
-import { CanvasComponent } from '../canvas/canvas';
-import { ToolbarComponent } from '../toolbar/toolbar';
+import { Component, inject, ChangeDetectionStrategy, viewChild, effect } from '@angular/core';
+import { RouterOutlet } from '@angular/router';
 import { ToastComponent } from '../toast/toast';
 import { ImportDialogComponent } from '../import-dialog/import-dialog';
 import { SidebarComponent } from '../sidebar/sidebar';
-import { UrlLoaderService } from '../../services/url-loader.service';
+import { ImportDialogService } from '../../services/import-dialog.service';
 
 @Component({
   selector: 'app-shell',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [CanvasComponent, ToolbarComponent, ToastComponent, ImportDialogComponent, SidebarComponent],
+  imports: [RouterOutlet, ToastComponent, ImportDialogComponent, SidebarComponent],
   template: `
     <div class="app-frame">
       <app-sidebar />
       <div class="app-main">
-        <app-toolbar (importRequested)="onImportRequested()" />
-        <app-canvas />
+        <router-outlet />
       </div>
     </div>
     <app-toast />
@@ -41,21 +39,19 @@ import { UrlLoaderService } from '../../services/url-loader.service';
       min-width: 0;
       height: 100%;
     }
-    .app-main app-canvas {
-      flex: 1 1 auto;
-      min-height: 0;
-    }
   `],
 })
-export class AppShellComponent implements OnInit {
-  private urlLoader = inject(UrlLoaderService);
+export class AppShellComponent {
+  private importDialogService = inject(ImportDialogService);
   private importDialog = viewChild<ImportDialogComponent>('importDialog');
 
-  ngOnInit(): void {
-    this.urlLoader.load();
-  }
-
-  onImportRequested(): void {
-    this.importDialog()?.open();
+  constructor() {
+    // The toolbar (Scratch Canvas) and Sidebar Project rows both request the
+    // import dialog through the service; the shell owns the single instance.
+    effect(() => {
+      if (this.importDialogService.openRequests() > 0) {
+        this.importDialog()?.open();
+      }
+    });
   }
 }

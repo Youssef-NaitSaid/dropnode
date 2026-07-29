@@ -1,4 +1,5 @@
-import { Component, inject, ChangeDetectionStrategy, output } from '@angular/core';
+import { Component, inject, ChangeDetectionStrategy, input } from '@angular/core';
+import { Router } from '@angular/router';
 import { NgIcon, provideIcons } from '@ng-icons/core';
 import {
   lucideUndo2,
@@ -13,6 +14,7 @@ import {
   lucideCopy,
   lucideLink,
   lucideCloud,
+  lucideFolderPlus,
 } from '@ng-icons/lucide';
 import { HlmButton } from '@spartan-ng/helm/button';
 import { HlmSeparator } from '@spartan-ng/helm/separator';
@@ -20,10 +22,13 @@ import {
   HlmDropdownMenu,
   HlmDropdownMenuTrigger,
   HlmDropdownMenuItem,
+  HlmDropdownMenuLabel,
 } from '@spartan-ng/helm/dropdown-menu';
 import { GraphService } from '../../services/graph.service';
 import { HistoryService } from '../../services/history.service';
 import { ExportService } from '../../services/export.service';
+import { CollectionService } from '../../services/collection.service';
+import { ImportDialogService } from '../../services/import-dialog.service';
 import { CreateGroupCommand, SetNodeColorCommand } from '../../services/commands';
 import { NODE_PALETTE } from '../../models/node';
 
@@ -31,7 +36,7 @@ import { NODE_PALETTE } from '../../models/node';
   selector: 'app-toolbar',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [NgIcon, HlmButton, HlmSeparator, HlmDropdownMenu, HlmDropdownMenuTrigger, HlmDropdownMenuItem],
+  imports: [NgIcon, HlmButton, HlmSeparator, HlmDropdownMenu, HlmDropdownMenuTrigger, HlmDropdownMenuItem, HlmDropdownMenuLabel],
   providers: [
     provideIcons({
       lucideUndo2,
@@ -46,6 +51,7 @@ import { NODE_PALETTE } from '../../models/node';
       lucideCopy,
       lucideLink,
       lucideCloud,
+      lucideFolderPlus,
     }),
   ],
   template: `
@@ -100,12 +106,25 @@ import { NODE_PALETTE } from '../../models/node';
         <button hlmBtn variant="ghost" size="icon" (click)="addGroup()" title="Add Group" aria-label="Add group">
           <ng-icon name="lucideGroup" />
         </button>
-        <button hlmBtn variant="ghost" size="icon" (click)="openImport()" title="Import" aria-label="Import">
-          <ng-icon name="lucideUpload" />
-        </button>
-        <button hlmBtn variant="ghost" size="icon" [hlmDropdownMenuTrigger]="exportMenu" title="Export" aria-label="Export">
-          <ng-icon name="lucideDownload" />
-        </button>
+        @if (scratchMode()) {
+          <button hlmBtn variant="ghost" size="icon" (click)="openImport()" title="Import" aria-label="Import">
+            <ng-icon name="lucideUpload" />
+          </button>
+          <button hlmBtn variant="ghost" size="icon" [hlmDropdownMenuTrigger]="exportMenu" title="Export" aria-label="Export">
+            <ng-icon name="lucideDownload" />
+          </button>
+          <button
+            hlmBtn
+            variant="ghost"
+            size="icon"
+            [hlmDropdownMenuTrigger]="saveAsProjectMenu"
+            [disabled]="collectionService.collections().length === 0"
+            [title]="collectionService.collections().length === 0 ? 'Create a collection first' : 'Save as project'"
+            aria-label="Save as project"
+          >
+            <ng-icon name="lucideFolderPlus" />
+          </button>
+        }
       </div>
     </div>
 
@@ -130,6 +149,17 @@ import { NODE_PALETTE } from '../../models/node';
             <span class="text-xs text-muted-foreground">Sign in required — coming soon</span>
           </span>
         </button>
+      </div>
+    </ng-template>
+
+    <ng-template #saveAsProjectMenu>
+      <div hlmDropdownMenu class="w-56">
+        <div hlmDropdownMenuLabel>Save to collection</div>
+        @for (collection of collectionService.collections(); track collection.id) {
+          <button hlmDropdownMenuItem (triggered)="saveAsProject(collection.id)">
+            <span class="truncate">{{ collection.name }}</span>
+          </button>
+        }
       </div>
     </ng-template>
   `,
@@ -169,9 +199,13 @@ import { NODE_PALETTE } from '../../models/node';
 export class ToolbarComponent {
   graphService = inject(GraphService);
   historyService = inject(HistoryService);
+  collectionService = inject(CollectionService);
   private exportService = inject(ExportService);
+  private importDialogService = inject(ImportDialogService);
+  private router = inject(Router);
 
-  importRequested = output<void>();
+  /** True on `/` — Import/Export/Save-as-project only exist for the Scratch Canvas. */
+  scratchMode = input<boolean>(false);
 
   palette = NODE_PALETTE;
 
@@ -221,7 +255,16 @@ export class ToolbarComponent {
   }
 
   openImport(): void {
-    this.importRequested.emit();
+    this.importDialogService.requestOpen();
+  }
+
+  /** Keep the scratch graph as a Project in the chosen Collection. */
+  saveAsProject(collectionId: string): void {
+    const project = this.collectionService.saveScratchAsProject(
+      collectionId,
+      this.graphService.exportGraph(),
+    );
+    this.router.navigate(['/p', project.id]);
   }
 
   exportToFile(): void {

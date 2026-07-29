@@ -83,6 +83,7 @@
 - a plain click on a Node selects it without creating a History entry
 - deleting a Node via Delete/Backspace removes the Node and its Connections as one compound undo step; undo restores the Node and its Connections with their original ids
 - Import does not clear History, so undoing after an Import can reference stale ids
+- switching between Projects (or to the Scratch Canvas) clears History — undo never crosses a Project boundary
 
 ## import-export
 
@@ -91,17 +92,41 @@
 - Import validation also rejects kind values other than 'group', off-palette colors, parentId values that reference a missing node or a non-Group, Groups carrying a parentId, and Connections linking a Group to its own child
 - payloads without kind, parentId, or color import unchanged as plain nodes — pre-Group exports and links stay valid
 - Import validation does NOT reject duplicate Connection ids or self-connections — only createConnection guards those
-- label: the toolbar has a single Export button opening a menu with four items: Export JSON file, Copy JSON, Copy link, and a disabled Export to Drive placeholder hinting "Sign in required — coming soon"
-  command: grep -q 'Export to Drive' src/app/components/toolbar/toolbar.ts
+- label: the Export menu offers four items — Export JSON file, Copy JSON, Copy link, and a disabled Export to Drive placeholder hinting "Sign in required — coming soon"; it opens from the Scratch Canvas toolbar and from each project row's Export submenu in the Sidebar
+  command: grep -q 'Export to Drive' src/app/components/toolbar/toolbar.ts && grep -q 'Export to Drive' src/app/components/sidebar/sidebar.ts
 - label: Export downloads pretty-printed 2-space JSON named dropnode-graph.json with a success toast; Copy JSON copies the same JSON to the clipboard with a success/error toast
   command: grep -q 'dropnode-graph.json' src/app/services/export.service.ts
-- Copy link copies the app URL with the Graph State as ?data=<url-encoded pretty JSON>, dropping any existing query parameters; the link is copied whatever its length, with a success/error toast
+- a project row's Export actions read the stored graph from localStorage and never navigate; the file is named after the Project (slugged), falling back to project.json
+- Copy link copies <origin>/?data=<url-encoded pretty JSON>, dropping any existing path and query parameters — share links always land on the Scratch Canvas; the link is copied whatever its length, with a success/error toast
 - the Export menu is built on @angular/cdk/menu primitives; export side effects live in ExportService, never in the toolbar component
 - exported Graph State is a copy; mutating it does not affect editor state
-- label: on startup the app imports a Graph State from the URL query parameter named data; a missing parameter is a silent no-op
+- label: on startup the app imports a Graph State from the URL query parameter named data; ?data is honored only on the Scratch Canvas route (/), never on /p/:projectId; a missing parameter is a silent no-op
   command: grep -q "params.get('data')" src/app/services/graph.service.ts
 - invalid URL data shows an error toast prefixed "URL data invalid: "; a successful URL load toasts "Graph loaded from URL"
 - the import dialog offers File Upload and Paste JSON tabs; file content takes precedence over pasted text, errors show inline and keep the dialog open
+
+## collections
+
+- a Collection is a named container of zero or more Projects shown as a parent entry in the Sidebar; Collections are flat — never nested
+- every Project belongs to exactly one Collection; a Project is a saved graph with its own route /p/:projectId
+- label: Collections and Projects — including each Project's Graph State and Viewport — persist in localStorage under the single schema-versioned key dropnode:collections (ADR-0007)
+  command: grep -q "dropnode:collections" src/app/services/collection.service.ts
+- Collection ids follow col_{timestamp}_{counter} and Project ids proj_{timestamp}_{counter}; duplicate Collection and Project names are allowed
+- / redirects to the most recently opened Project; a ?data share link or an empty store stays on the Scratch Canvas
+- an unknown or deleted /p/:projectId redirects to / with a "Project not found" error toast
+- editing auto-saves: Graph State and Viewport changes persist to the current Project debounced at 300ms; there is no save button and no dirty state
+- the per-Project Viewport is stored outside Graph State — exported JSON and ?data links carry nodes and connections only
+- deleting a Collection cascade-deletes all its Projects; Collection and Project deletion are permanent (not undoable) and both guarded by a confirmation modal, the Collection modal stating its project count
+- deleting the Project being viewed navigates to the most recently opened surviving Project, or to / when none remain
+- Sidebar inline rename follows the node-label contract: Enter or blur commits, Escape cancels, empty or unchanged names are never committed; newly created Collections and Projects drop straight into rename
+- "Import collection" (beside "New collection" in the Sidebar header) appends a brand-new Collection from the envelope file after validating every project graph wholesale — one bad project rejects the file; collection and project ids are regenerated so importing twice yields two independent copies
+- collection export downloads <collection-slug>.dropnode-collection.json containing { name, projects: [{ name, graph }] } where graph is exactly the Graph State export shape
+- Import on a project row navigates to that Project first, then opens the import dialog — a replace always happens on-screen
+- the toolbar shows Import, Export, and Save-as-project only on the Scratch Canvas route; on /p/:projectId those actions live on the Sidebar row menus
+- "Save as project" lists Collections in a dropdown and is disabled with a "Create a collection first" hint while no Collection exists
+- the Scratch Canvas survives in-session navigation in memory only — a reload still clears it; "Save as project" consumes it
+- label: per-Collection expand/collapse state persists under dropnode:sidebar-collapsed-collections
+  command: grep -q "dropnode:sidebar-collapsed-collections" src/app/services/sidebar.service.ts
 
 ## shortcuts
 
