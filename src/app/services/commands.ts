@@ -177,6 +177,29 @@ export class DeleteConnectionCommand implements Command {
   }
 }
 
+export class SetConnectionLabelCommand implements Command {
+  description = 'Set Connection Label';
+  private originalLabel: string | undefined;
+
+  constructor(
+    private graphService: GraphService,
+    private connectionId: string,
+    private newLabel: string,
+  ) {
+    const conn = this.graphService.connections().find(c => c.id === connectionId);
+    this.originalLabel = conn?.label;
+  }
+
+  execute(): void {
+    this.graphService.setConnectionLabel(this.connectionId, this.newLabel);
+  }
+
+  undo(): void {
+    // An absent original label is restored by committing empty (which clears it)
+    this.graphService.setConnectionLabel(this.connectionId, this.originalLabel ?? '');
+  }
+}
+
 // Compound command for deleting a node and its connections as a single undoable action
 export class DeleteNodeCompoundCommand implements Command {
   description = 'Delete Node';

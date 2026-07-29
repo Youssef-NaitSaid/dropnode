@@ -14,6 +14,7 @@ import {
   CompoundCommand,
   CreateConnectionCommand,
   DeleteConnectionCommand,
+  SetConnectionLabelCommand,
   NodeRect,
 } from '../../services/commands';
 import { NodeComponent, GripCorner } from '../node/node';
@@ -37,10 +38,32 @@ import { HandleSide } from '../../models/node';
         class="canvas-transform"
         [style.transform]="transformStyle()"
       >
-        <app-connection-layer #connectionLayer (connectionDelete)="onConnectionDelete($event)" />
+        <!-- ADR-0008 stacking: Group cards, then Connections, then regular nodes,
+             so Connections stay clickable over a Group's rect -->
+        <div class="nodes-container">
+          @for (node of groupNodes(); track node.id) {
+            <app-node
+              [node]="node"
+              [isSelected]="graphService.selectedNodeId() === node.id"
+              [snapTarget]="currentSnapTarget"
+              (startMove)="onNodeStartMove($event)"
+              (rename)="onNodeRename($event)"
+              (handleDragStart)="onHandleDragStart($event)"
+              (sizeChanged)="onNodeSizeChanged($event)"
+              (startResize)="onNodeStartResize($event)"
+              (createChild)="onCreateChild($event)"
+            />
+          }
+        </div>
+
+        <app-connection-layer
+          #connectionLayer
+          (connectionSelect)="onConnectionSelect($event)"
+          (labelCommit)="onConnectionLabelCommit($event)"
+        />
 
         <div class="nodes-container">
-          @for (node of orderedNodes(); track node.id) {
+          @for (node of regularNodes(); track node.id) {
             <app-node
               [node]="node"
               [isSelected]="graphService.selectedNodeId() === node.id"
@@ -98,11 +121,9 @@ export class CanvasComponent {
 
   private connectionLayer = viewChild<ConnectionLayerComponent>('connectionLayer');
 
-  // Groups render beneath regular nodes so children stay on top
-  orderedNodes = computed(() => {
-    const nodes = this.graphService.nodes();
-    return [...nodes.filter(n => n.kind === 'group'), ...nodes.filter(n => n.kind !== 'group')];
-  });
+  // Groups render beneath the connection layer, regular nodes above it (ADR-0008)
+  groupNodes = computed(() => this.graphService.nodes().filter(n => n.kind === 'group'));
+  regularNodes = computed(() => this.graphService.nodes().filter(n => n.kind !== 'group'));
 
   // Node drag state
   private isDraggingNode = false;
@@ -431,8 +452,12 @@ export class CanvasComponent {
     this.historyService.execute(cmd);
   }
 
-  onConnectionDelete(connectionId: string): void {
-    const cmd = new DeleteConnectionCommand(this.graphService, connectionId);
+  onConnectionSelect(connectionId: string): void {
+    this.graphService.selectConnection(connectionId);
+  }
+
+  onConnectionLabelCommit(event: { connectionId: string; newLabel: string }): void {
+    const cmd = new SetConnectionLabelCommand(this.graphService, event.connectionId, event.newLabel);
     this.historyService.execute(cmd);
   }
 

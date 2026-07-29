@@ -6,4 +6,6 @@ export interface Connection {
   sourceHandle: HandleSide;
   targetNodeId: string;
   targetHandle: HandleSide;
+  // Connection Label: optional annotation text; absent means unlabeled
+  label?: string;
 }

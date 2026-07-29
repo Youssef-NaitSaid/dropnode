@@ -14,6 +14,7 @@ import {
   ResizeNodeCommand,
   SetNodeColorCommand,
   CompoundCommand,
+  SetConnectionLabelCommand,
 } from './commands';
 
 describe('Commands', () => {
@@ -225,6 +226,86 @@ describe('Commands', () => {
       expect(restored.id).toBe(conn!.id);
       expect(restored.sourceNodeId).toBe(node1.id);
       expect(restored.targetNodeId).toBe(node2.id);
+    });
+
+    it('undo preserves the Connection Label', () => {
+      const node1 = graphService.createNode('Node 1', 0, 0);
+      const node2 = graphService.createNode('Node 2', 100, 0);
+      const conn = graphService.createConnection(node1.id, 'right', node2.id, 'left');
+      graphService.setConnectionLabel(conn!.id, 'depends on');
+
+      const cmd = new DeleteConnectionCommand(graphService, conn!.id);
+      cmd.execute();
+      cmd.undo();
+
+      expect(graphService.connections()[0].label).toBe('depends on');
+    });
+  });
+
+  describe('SetConnectionLabelCommand', () => {
+    it('execute sets the label', () => {
+      const node1 = graphService.createNode('Node 1', 0, 0);
+      const node2 = graphService.createNode('Node 2', 100, 0);
+      const conn = graphService.createConnection(node1.id, 'right', node2.id, 'left');
+
+      const cmd = new SetConnectionLabelCommand(graphService, conn!.id, 'depends on');
+      cmd.execute();
+
+      expect(graphService.connections()[0].label).toBe('depends on');
+    });
+
+    it('undo restores the exact previous label', () => {
+      const node1 = graphService.createNode('Node 1', 0, 0);
+      const node2 = graphService.createNode('Node 2', 100, 0);
+      const conn = graphService.createConnection(node1.id, 'right', node2.id, 'left');
+      graphService.setConnectionLabel(conn!.id, 'old label');
+
+      const cmd = new SetConnectionLabelCommand(graphService, conn!.id, 'new label');
+      cmd.execute();
+      expect(graphService.connections()[0].label).toBe('new label');
+
+      cmd.undo();
+      expect(graphService.connections()[0].label).toBe('old label');
+    });
+
+    it('undo restores "no label" when the Connection had none', () => {
+      const node1 = graphService.createNode('Node 1', 0, 0);
+      const node2 = graphService.createNode('Node 2', 100, 0);
+      const conn = graphService.createConnection(node1.id, 'right', node2.id, 'left');
+
+      const cmd = new SetConnectionLabelCommand(graphService, conn!.id, 'depends on');
+      cmd.execute();
+      cmd.undo();
+
+      expect('label' in graphService.connections()[0]).toBe(false);
+    });
+
+    it('redo (execute after undo) re-applies the label', () => {
+      const node1 = graphService.createNode('Node 1', 0, 0);
+      const node2 = graphService.createNode('Node 2', 100, 0);
+      const conn = graphService.createConnection(node1.id, 'right', node2.id, 'left');
+      graphService.setConnectionLabel(conn!.id, 'old label');
+
+      const cmd = new SetConnectionLabelCommand(graphService, conn!.id, 'new label');
+      cmd.execute();
+      cmd.undo();
+      cmd.execute();
+
+      expect(graphService.connections()[0].label).toBe('new label');
+    });
+
+    it('execute with empty text removes the label; undo restores it', () => {
+      const node1 = graphService.createNode('Node 1', 0, 0);
+      const node2 = graphService.createNode('Node 2', 100, 0);
+      const conn = graphService.createConnection(node1.id, 'right', node2.id, 'left');
+      graphService.setConnectionLabel(conn!.id, 'depends on');
+
+      const cmd = new SetConnectionLabelCommand(graphService, conn!.id, '');
+      cmd.execute();
+      expect('label' in graphService.connections()[0]).toBe(false);
+
+      cmd.undo();
+      expect(graphService.connections()[0].label).toBe('depends on');
     });
   });
 

@@ -2,7 +2,7 @@ import { Directive, inject, HostListener } from '@angular/core';
 import { GraphService } from '../services/graph.service';
 import { HistoryService } from '../services/history.service';
 import { SidebarService } from '../services/sidebar.service';
-import { DeleteNodeCompoundCommand } from '../services/commands';
+import { DeleteConnectionCommand, DeleteNodeCompoundCommand } from '../services/commands';
 
 @Directive({
   selector: '[appKeyboardShortcuts]',
@@ -42,8 +42,15 @@ export class KeyboardShortcuts {
       return;
     }
 
-    // Delete/Backspace: Delete selected node
+    // Delete/Backspace: delete whichever single element is selected
     if (event.key === 'Delete' || event.key === 'Backspace') {
+      const selectedConnectionId = this.graphService.selectedConnectionId();
+      if (selectedConnectionId) {
+        event.preventDefault();
+        const cmd = new DeleteConnectionCommand(this.graphService, selectedConnectionId);
+        this.historyService.execute(cmd);
+        return;
+      }
       const selectedId = this.graphService.selectedNodeId();
       if (selectedId) {
         event.preventDefault();

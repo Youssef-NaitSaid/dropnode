@@ -61,7 +61,11 @@
 - the source Node's own Handles are never snap targets during a connection drag
 - dropping a connection drag in empty space (no snap) creates nothing
 - during a connection drag a dashed ghost bezier renders from the source Handle to the cursor
-- clicking a Connection path deletes it as an undoable Command; there is no keyboard shortcut for Connection deletion
+- clicking a Connection path or its Label selects the Connection; Delete or Backspace deletes the selected Connection as one undoable Command
+- selection is exclusive: at most one element (Node or Connection) is selected at a time — selecting one kind deselects the other, and clicking empty Canvas or pressing Escape clears whichever is selected
+- a Connection carries an optional Label; double-clicking the path or Label opens inline editing at the curve midpoint — Enter or blur commits, Escape cancels, and committing empty removes the Label (deliberate deviation from the Node rule)
+- setting or clearing a Connection Label is one undoable SetConnectionLabelCommand; committing unchanged text pushes nothing onto History; createConnection never sets a label
+- a Connection Label renders as horizontal text on an opaque pill centered at the cubic bezier midpoint, moving with the curve; the pill is part of the Connection's hit area
 - Connections render as cubic beziers; control points extend perpendicular to each Handle's edge, offset clamped between 40 and 150 (distance x 0.4)
 - Handle positions are the midpoints of the Node's four edges, computed from x, y, width, height
 
@@ -92,6 +96,7 @@
 - Import validation also rejects kind values other than 'group', off-palette colors, parentId values that reference a missing node or a non-Group, Groups carrying a parentId, and Connections linking a Group to its own child
 - payloads without kind, parentId, or color import unchanged as plain nodes — pre-Group exports and links stay valid
 - Import validation does NOT reject duplicate Connection ids or self-connections — only createConnection guards those
+- a Connection label field, when present, must be a string or the payload is rejected with "Invalid connection {id}: label must be a string"; empty-string labels import cleanly and render as no Label, and payloads without label fields import unchanged
 - label: the Export menu offers four items — Export JSON file, Copy JSON, Copy link, and a disabled Export to Drive placeholder hinting "Sign in required — coming soon"; it opens from the Scratch Canvas toolbar and from each project row's Export submenu in the Sidebar
   command: grep -q 'Export to Drive' src/app/components/toolbar/toolbar.ts && grep -q 'Export to Drive' src/app/components/sidebar/sidebar.ts
 - label: Export downloads pretty-printed 2-space JSON named dropnode-graph.json with a success toast; Copy JSON copies the same JSON to the clipboard with a success/error toast
@@ -131,7 +136,7 @@
 ## shortcuts
 
 - all keyboard shortcuts are ignored while focus is in an input, textarea, or contenteditable element
-- Delete or Backspace deletes the selected Node (with its Connections); Escape deselects and blurs the active element
+- Delete or Backspace deletes the selected element — a Connection alone, or a Node with its Connections; Escape deselects and blurs the active element
 
 ## ui
 
@@ -140,6 +145,7 @@
 ## architecture
 
 - Nodes are DOM Angular components and Connections an SVG overlay, per ADR-0001 hybrid rendering
+- rendering stacks in three layers inside the shared transform per ADR-0008: Group cards, then the SVG connection layer, then regular node cards — Connections are clickable over Group rects but stay occluded under regular node cards
 - label: the perf-critical components (canvas, node, connection-layer) use OnPush change detection per ADR-0003
   command: grep -q OnPush src/app/components/canvas/canvas.ts && grep -q OnPush src/app/components/node/node.ts && grep -q OnPush src/app/components/connection-layer/connection-layer.ts
 - the root App and Toast components do not declare OnPush, deviating from the ADR-0003 mandate that all components use OnPush

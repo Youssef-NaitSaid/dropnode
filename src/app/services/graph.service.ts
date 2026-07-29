@@ -14,6 +14,7 @@ export class GraphService {
   readonly connections = signal<Connection[]>([]);
   readonly viewportState = signal<ViewportState>({ panX: 0, panY: 0, zoom: 1 });
   readonly selectedNodeId = signal<string | null>(null);
+  readonly selectedConnectionId = signal<string | null>(null);
 
   // Computed signals
   readonly nodeCount = computed(() => this.nodes().length);
@@ -247,12 +248,36 @@ export class GraphService {
     const conn = this.connections().find(c => c.id === id);
     if (!conn) return undefined;
     this.connections.update(conns => conns.filter(c => c.id !== id));
+    if (this.selectedConnectionId() === id) {
+      this.selectedConnectionId.set(null);
+    }
     return conn;
   }
 
-  // Selection
+  // Connection Label: trimmed; empty or whitespace clears the field entirely
+  setConnectionLabel(id: string, label: string): void {
+    const trimmed = label.trim();
+    this.connections.update(conns =>
+      conns.map(c => {
+        if (c.id !== id) return c;
+        if (trimmed === '') {
+          const { label: _removed, ...rest } = c;
+          return rest;
+        }
+        return { ...c, label: trimmed };
+      })
+    );
+  }
+
+  // Selection is exclusive: at most one element (Node or Connection) at a time
   selectNode(id: string | null): void {
     this.selectedNodeId.set(id);
+    this.selectedConnectionId.set(null);
+  }
+
+  selectConnection(id: string): void {
+    this.selectedConnectionId.set(id);
+    this.selectedNodeId.set(null);
   }
 
   // Viewport
@@ -303,6 +328,7 @@ export class GraphService {
     this.nodes.set([...state.nodes]);
     this.connections.set([...state.connections]);
     this.selectedNodeId.set(null);
+    this.selectedConnectionId.set(null);
     return { success: true };
   }
 
@@ -409,6 +435,9 @@ export class GraphService {
       if (!validHandles.includes(conn['targetHandle'] as HandleSide)) {
         return { valid: false, error: `Invalid connection ${connId}: invalid targetHandle` };
       }
+      if (conn['label'] !== undefined && typeof conn['label'] !== 'string') {
+        return { valid: false, error: `Invalid connection ${connId}: label must be a string` };
+      }
       const sourceId = conn['sourceNodeId'] as string;
       const targetId = conn['targetNodeId'] as string;
       if (parentOf.get(sourceId) === targetId || parentOf.get(targetId) === sourceId) {
@@ -443,5 +472,6 @@ export class GraphService {
     this.nodes.set([]);
     this.connections.set([]);
     this.selectedNodeId.set(null);
+    this.selectedConnectionId.set(null);
   }
 }

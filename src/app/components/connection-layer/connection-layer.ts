@@ -22,7 +22,9 @@ interface DragState {
         <path
           [attr.d]="getConnectionPath(conn)"
           class="connection-path"
-          (mousedown)="onConnectionClick(conn, $event)"
+          [class.selected]="isSelected(conn.id)"
+          (mousedown)="onConnectionMouseDown(conn, $event)"
+          (dblclick)="onConnectionDoubleClick(conn, $event)"
         />
       }
 
@@ -33,6 +35,34 @@ interface DragState {
         />
       }
     </svg>
+
+    <!-- Connection Labels are DOM pills (ADR-0001 hybrid: text in DOM, curves in SVG) -->
+    <div class="label-layer">
+      @for (conn of connections(); track conn.id) {
+        @if (editingConnectionId() === conn.id) {
+          <input
+            class="connection-label-input"
+            [style.left.px]="getLabelMidpoint(conn).x"
+            [style.top.px]="getLabelMidpoint(conn).y"
+            [value]="conn.label ?? ''"
+            (blur)="finishLabelEdit(conn, $event)"
+            (keydown.enter)="finishLabelEdit(conn, $event)"
+            (keydown.escape)="cancelLabelEdit()"
+            (mousedown)="$event.stopPropagation()"
+            autofocus
+          />
+        } @else if (conn.label) {
+          <div
+            class="connection-label"
+            [class.selected]="isSelected(conn.id)"
+            [style.left.px]="getLabelMidpoint(conn).x"
+            [style.top.px]="getLabelMidpoint(conn).y"
+            (mousedown)="onConnectionMouseDown(conn, $event)"
+            (dblclick)="onConnectionDoubleClick(conn, $event)"
+          >{{ conn.label }}</div>
+        }
+      }
+    </div>
   `,
   styles: [`
     .connection-layer {
@@ -51,8 +81,13 @@ interface DragState {
       transition: stroke 0.15s ease;
     }
     .connection-path:hover {
-      stroke: #ff6b6b;
+      stroke: #9d85ff;
       stroke-width: 3.5;
+    }
+    .connection-path.selected {
+      stroke: #7c5cff;
+      stroke-width: 4;
+      filter: drop-shadow(0 0 4px rgba(124, 92, 255, 0.6));
     }
     .connection-ghost {
       fill: none;
@@ -61,6 +96,43 @@ interface DragState {
       stroke-dasharray: 8 4;
       opacity: 0.7;
       pointer-events: none;
+    }
+    .label-layer {
+      position: absolute;
+      top: 0;
+      left: 0;
+    }
+    .connection-label {
+      position: absolute;
+      transform: translate(-50%, -50%);
+      background: #1c1c22;
+      border: 1px solid rgba(124, 92, 255, 0.45);
+      border-radius: 999px;
+      padding: 2px 10px;
+      color: #e8e8ee;
+      font-size: 12px;
+      font-weight: 500;
+      white-space: nowrap;
+      cursor: pointer;
+      user-select: none;
+    }
+    .connection-label.selected {
+      border-color: #7c5cff;
+      box-shadow: 0 0 0 2px rgba(124, 92, 255, 0.4);
+    }
+    .connection-label-input {
+      position: absolute;
+      transform: translate(-50%, -50%);
+      background: #1c1c22;
+      border: 1px solid #7c5cff;
+      border-radius: 999px;
+      padding: 2px 10px;
+      color: #e8e8ee;
+      font-size: 12px;
+      font-weight: 500;
+      outline: none;
+      width: 120px;
+      text-align: center;
     }
   `],
 })
@@ -86,7 +158,11 @@ export class ConnectionLayerComponent {
 
   dragState = signal<DragState | null>(null);
 
-  connectionDelete = output<string>();
+  // Connection whose label is being edited inline, if any
+  editingConnectionId = signal<string | null>(null);
+
+  connectionSelect = output<string>();
+  labelCommit = output<{ connectionId: string; newLabel: string }>();
 
   snapTarget = computed(() => {
     const state = this.dragState();
@@ -99,9 +175,36 @@ export class ConnectionLayerComponent {
   }
 
   getConnectionPath(conn: Connection): string {
+    const { start, end, cp1, cp2 } = this.getConnectionGeometry(conn);
+    return this.formatBezier(start, cp1, cp2, end);
+  }
+
+  // Cubic bezier midpoint (t = 0.5): (start + 3·cp1 + 3·cp2 + end) / 8
+  getLabelMidpoint(conn: Connection): { x: number; y: number } {
+    const { start, end, cp1, cp2 } = this.getConnectionGeometry(conn);
+    return {
+      x: (start.x + 3 * cp1.x + 3 * cp2.x + end.x) / 8,
+      y: (start.y + 3 * cp1.y + 3 * cp2.y + end.y) / 8,
+    };
+  }
+
+  private getConnectionGeometry(conn: Connection): {
+    start: { x: number; y: number };
+    end: { x: number; y: number };
+    cp1: { x: number; y: number };
+    cp2: { x: number; y: number };
+  } {
     const start = this.getHandlePos(conn.sourceNodeId, conn.sourceHandle);
     const end = this.getHandlePos(conn.targetNodeId, conn.targetHandle);
-    return this.buildBezierPath(start, end, conn.sourceHandle, conn.targetHandle);
+    const distance = Math.sqrt((end.x - start.x) ** 2 + (end.y - start.y) ** 2);
+    const offset = Math.min(Math.max(distance * 0.4, 40), 150);
+    const cp1 = this.getControlPoint(start, conn.sourceHandle, offset);
+    const cp2 = this.getControlPoint(end, conn.targetHandle, offset);
+    return { start, end, cp1, cp2 };
+  }
+
+  isSelected(connectionId: string): boolean {
+    return this.graphService.selectedConnectionId() === connectionId;
   }
 
   getGhostPath(): string {
@@ -123,6 +226,15 @@ export class ConnectionLayerComponent {
     const offset = Math.min(Math.max(distance * 0.4, 40), 150);
     const cp1 = this.getControlPoint(start, startHandle, offset);
     const cp2 = this.getControlPoint(end, endHandle, offset);
+    return this.formatBezier(start, cp1, cp2, end);
+  }
+
+  private formatBezier(
+    start: { x: number; y: number },
+    cp1: { x: number; y: number },
+    cp2: { x: number; y: number },
+    end: { x: number; y: number },
+  ): string {
     return `M ${start.x} ${start.y} C ${cp1.x} ${cp1.y}, ${cp2.x} ${cp2.y}, ${end.x} ${end.y}`;
   }
 
@@ -200,8 +312,31 @@ export class ConnectionLayerComponent {
     return null;
   }
 
-  onConnectionClick(conn: Connection, event: MouseEvent): void {
+  onConnectionMouseDown(conn: Connection, event: MouseEvent): void {
     event.stopPropagation();
-    this.connectionDelete.emit(conn.id);
+    this.connectionSelect.emit(conn.id);
+  }
+
+  onConnectionDoubleClick(conn: Connection, event: MouseEvent): void {
+    event.stopPropagation();
+    this.editingConnectionId.set(conn.id);
+  }
+
+  finishLabelEdit(conn: Connection, event: Event): void {
+    // Enter commits and clears the editing flag; the input's follow-up blur lands here too
+    if (this.editingConnectionId() !== conn.id) return;
+    this.editingConnectionId.set(null);
+    const input = event.target as HTMLInputElement;
+    const newLabel = input.value.trim();
+    const current = this.connections().find(c => c.id === conn.id);
+    if (!current) return;
+    // Unlike Node labels, committing empty is meaningful: it removes the label
+    if (newLabel !== (current.label ?? '')) {
+      this.labelCommit.emit({ connectionId: conn.id, newLabel });
+    }
+  }
+
+  cancelLabelEdit(): void {
+    this.editingConnectionId.set(null);
   }
 }

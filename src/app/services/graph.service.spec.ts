@@ -209,6 +209,46 @@ describe('GraphService', () => {
     });
   });
 
+  describe('setConnectionLabel', () => {
+    it('sets a trimmed label on the connection', () => {
+      const node1 = service.createNode('Node 1', 0, 0);
+      const node2 = service.createNode('Node 2', 300, 0);
+      const conn = service.createConnection(node1.id, 'right', node2.id, 'left');
+
+      service.setConnectionLabel(conn!.id, '  depends on  ');
+
+      expect(service.connections()[0].label).toBe('depends on');
+    });
+
+    it('clears the label field when committing empty or whitespace', () => {
+      const node1 = service.createNode('Node 1', 0, 0);
+      const node2 = service.createNode('Node 2', 300, 0);
+      const conn = service.createConnection(node1.id, 'right', node2.id, 'left');
+      service.setConnectionLabel(conn!.id, 'depends on');
+
+      service.setConnectionLabel(conn!.id, '   ');
+
+      expect('label' in service.connections()[0]).toBe(false);
+    });
+
+    it('is a silent no-op for an unknown connection id', () => {
+      const node1 = service.createNode('Node 1', 0, 0);
+      const node2 = service.createNode('Node 2', 300, 0);
+      service.createConnection(node1.id, 'right', node2.id, 'left');
+
+      expect(() => service.setConnectionLabel('nonexistent', 'x')).not.toThrow();
+      expect(service.connections()[0].label).toBeUndefined();
+    });
+
+    it('createConnection never sets a label', () => {
+      const node1 = service.createNode('Node 1', 0, 0);
+      const node2 = service.createNode('Node 2', 300, 0);
+      const conn = service.createConnection(node1.id, 'right', node2.id, 'left');
+
+      expect('label' in conn!).toBe(false);
+    });
+  });
+
   describe('selectNode / clearSelection', () => {
     it('sets selectedNodeId', () => {
       const node = service.createNode('Test', 0, 0);
@@ -234,6 +274,89 @@ describe('GraphService', () => {
 
     it('selectedNode computed signal returns null when no selection', () => {
       expect(service.selectedNode()).toBeNull();
+    });
+  });
+
+  describe('exclusive selection across Nodes and Connections', () => {
+    function makeConnection() {
+      const node1 = service.createNode('Node 1', 0, 0);
+      const node2 = service.createNode('Node 2', 300, 0);
+      const conn = service.createConnection(node1.id, 'right', node2.id, 'left');
+      return { node1, node2, conn: conn! };
+    }
+
+    it('selectConnection sets selectedConnectionId', () => {
+      const { conn } = makeConnection();
+      service.selectConnection(conn.id);
+
+      expect(service.selectedConnectionId()).toBe(conn.id);
+    });
+
+    it('selecting a Connection deselects the selected Node', () => {
+      const { node1, conn } = makeConnection();
+      service.selectNode(node1.id);
+
+      service.selectConnection(conn.id);
+
+      expect(service.selectedNodeId()).toBeNull();
+      expect(service.selectedConnectionId()).toBe(conn.id);
+    });
+
+    it('selecting a Node deselects the selected Connection', () => {
+      const { node1, conn } = makeConnection();
+      service.selectConnection(conn.id);
+
+      service.selectNode(node1.id);
+
+      expect(service.selectedConnectionId()).toBeNull();
+      expect(service.selectedNodeId()).toBe(node1.id);
+    });
+
+    it('selectNode(null) clears the Connection selection too', () => {
+      const { conn } = makeConnection();
+      service.selectConnection(conn.id);
+
+      service.selectNode(null);
+
+      expect(service.selectedConnectionId()).toBeNull();
+      expect(service.selectedNodeId()).toBeNull();
+    });
+
+    it('deleting the selected Connection clears its selection', () => {
+      const { conn } = makeConnection();
+      service.selectConnection(conn.id);
+
+      service.deleteConnection(conn.id);
+
+      expect(service.selectedConnectionId()).toBeNull();
+    });
+
+    it('deleting a different Connection keeps the selection', () => {
+      const { node1, node2, conn } = makeConnection();
+      const other = service.createConnection(node1.id, 'top', node2.id, 'top');
+      service.selectConnection(conn.id);
+
+      service.deleteConnection(other!.id);
+
+      expect(service.selectedConnectionId()).toBe(conn.id);
+    });
+
+    it('importGraph clears the Connection selection', () => {
+      const { conn } = makeConnection();
+      service.selectConnection(conn.id);
+
+      service.importGraph({ nodes: [], connections: [] });
+
+      expect(service.selectedConnectionId()).toBeNull();
+    });
+
+    it('clearGraph clears the Connection selection', () => {
+      const { conn } = makeConnection();
+      service.selectConnection(conn.id);
+
+      service.clearGraph();
+
+      expect(service.selectedConnectionId()).toBeNull();
     });
   });
 
@@ -424,6 +547,36 @@ describe('GraphService', () => {
       expect(result.error).toContain('invalid sourceHandle');
     });
 
+    it('non-string connection label rejected wholesale', () => {
+      const result = service.importGraph({
+        nodes: [
+          { id: 'n1', label: 'Node 1', x: 0, y: 0, width: 160, height: 48 },
+          { id: 'n2', label: 'Node 2', x: 200, y: 0, width: 160, height: 48 },
+        ],
+        connections: [
+          { id: 'c1', sourceNodeId: 'n1', sourceHandle: 'right', targetNodeId: 'n2', targetHandle: 'left', label: 42 as any },
+        ],
+      } as any);
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('Invalid connection c1: label must be a string');
+    });
+
+    it('string and empty-string connection labels import cleanly', () => {
+      const result = service.importGraph({
+        nodes: [
+          { id: 'n1', label: 'Node 1', x: 0, y: 0, width: 160, height: 48 },
+          { id: 'n2', label: 'Node 2', x: 200, y: 0, width: 160, height: 48 },
+        ],
+        connections: [
+          { id: 'c1', sourceNodeId: 'n1', sourceHandle: 'right', targetNodeId: 'n2', targetHandle: 'left', label: 'depends on' },
+          { id: 'c2', sourceNodeId: 'n2', sourceHandle: 'right', targetNodeId: 'n1', targetHandle: 'left', label: '' },
+        ],
+      });
+      expect(result.success).toBe(true);
+      expect(service.connections()[0].label).toBe('depends on');
+      expect(service.connections()[1].label).toBe('');
+    });
+
     it('empty graph (no nodes, no connections) is valid', () => {
       const result = service.importGraph({ nodes: [], connections: [] });
       expect(result.success).toBe(true);
@@ -454,6 +607,20 @@ describe('GraphService', () => {
 
       exported.nodes[0].label = 'Modified';
       expect(service.nodes()[0].label).toBe('Test');
+    });
+
+    it('Connection Labels survive an export/import round trip', () => {
+      const node1 = service.createNode('Node 1', 0, 0);
+      const node2 = service.createNode('Node 2', 300, 0);
+      const conn = service.createConnection(node1.id, 'right', node2.id, 'left');
+      service.setConnectionLabel(conn!.id, 'depends on');
+
+      const exported = service.exportGraph();
+      service.clearGraph();
+      const result = service.importGraph(exported);
+
+      expect(result.success).toBe(true);
+      expect(service.connections()[0].label).toBe('depends on');
     });
   });
 
