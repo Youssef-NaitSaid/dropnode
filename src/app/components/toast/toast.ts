@@ -1,4 +1,7 @@
 import { Component, signal, inject, Injectable } from '@angular/core';
+import { NgIcon, provideIcons } from '@ng-icons/core';
+import { lucideCircleCheck, lucideCircleX, lucideInfo, lucideX } from '@ng-icons/lucide';
+import { HlmButton } from '@spartan-ng/helm/button';
 
 @Injectable({ providedIn: 'root' })
 export class ToastService {
@@ -25,11 +28,25 @@ export class ToastService {
 @Component({
   selector: 'app-toast',
   standalone: true,
+  imports: [NgIcon, HlmButton],
+  providers: [provideIcons({ lucideCircleCheck, lucideCircleX, lucideInfo, lucideX })],
   template: `
     @if (toastService.message(); as msg) {
-      <div class="toast" [class]="'toast-' + toastService.type()">
-        <span>{{ msg }}</span>
-        <button class="toast-close" (click)="toastService.dismiss()">×</button>
+      <div
+        class="toast flex items-center gap-3 rounded-lg border border-border bg-popover text-popover-foreground pl-3.5 pr-2 py-2.5 shadow-lg max-w-sm"
+      >
+        <ng-icon [name]="icon()" [class]="iconClass()" class="text-lg shrink-0" />
+        <span class="text-sm font-medium">{{ msg }}</span>
+        <button
+          hlmBtn
+          variant="ghost"
+          size="icon-sm"
+          class="ml-auto shrink-0"
+          (click)="toastService.dismiss()"
+          aria-label="Dismiss"
+        >
+          <ng-icon name="lucideX" />
+        </button>
       </div>
     }
   `,
@@ -41,41 +58,7 @@ export class ToastService {
       z-index: 1000;
     }
     .toast {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-      padding: 12px 20px;
-      border-radius: 8px;
-      font-size: 14px;
-      font-weight: 500;
-      box-shadow: 0 4px 12px rgba(0,0,0,0.3);
       animation: slideIn 0.3s ease;
-      max-width: 400px;
-    }
-    .toast-error {
-      background: #ff4757;
-      color: white;
-    }
-    .toast-info {
-      background: #6c63ff;
-      color: white;
-    }
-    .toast-success {
-      background: #2ed573;
-      color: #1a1a2e;
-    }
-    .toast-close {
-      background: none;
-      border: none;
-      color: inherit;
-      font-size: 18px;
-      cursor: pointer;
-      opacity: 0.7;
-      padding: 0;
-      line-height: 1;
-    }
-    .toast-close:hover {
-      opacity: 1;
     }
     @keyframes slideIn {
       from { transform: translateX(100%); opacity: 0; }
@@ -85,4 +68,20 @@ export class ToastService {
 })
 export class ToastComponent {
   toastService = inject(ToastService);
+
+  icon = () => {
+    switch (this.toastService.type()) {
+      case 'success': return 'lucideCircleCheck';
+      case 'error': return 'lucideCircleX';
+      default: return 'lucideInfo';
+    }
+  };
+
+  iconClass = () => {
+    switch (this.toastService.type()) {
+      case 'success': return 'text-emerald-400';
+      case 'error': return 'text-destructive';
+      default: return 'text-primary';
+    }
+  };
 }

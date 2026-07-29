@@ -1,9 +1,11 @@
 export type HandleSide = 'top' | 'right' | 'bottom' | 'left';
 
-// Curated background palette. An absent color means the default node background.
+// Curated background palette, retuned for the refined-dark canvas: light,
+// vivid pastels that stay legible with dark node text and pop on near-black.
+// An absent color means the default node background.
 export const NODE_PALETTE: readonly string[] = [
-  '#ffadad', '#ffd6a5', '#fdffb6', '#caffbf',
-  '#9bf6ff', '#a0c4ff', '#bdb2ff', '#ffc6ff',
+  '#ff8fa3', '#ffb37a', '#ffe08a', '#9fe0a3',
+  '#86dced', '#9fb4ff', '#c3a3ff', '#f2a3e8',
 ];
 
 export interface GraphNode {

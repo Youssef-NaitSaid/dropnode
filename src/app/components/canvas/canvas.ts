@@ -67,7 +67,10 @@ import { HandleSide } from '../../models/node';
     .canvas-container {
       width: 100%;
       height: 100%;
-      background: #1a1a2e;
+      background-color: #0e0e11;
+      background-image:
+        radial-gradient(circle at 1px 1px, rgba(255, 255, 255, 0.05) 1px, transparent 0);
+      background-size: 26px 26px;
       position: relative;
       overflow: hidden;
       cursor: grab;

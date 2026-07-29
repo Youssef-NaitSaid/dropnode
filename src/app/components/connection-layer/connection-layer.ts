@@ -44,7 +44,7 @@ interface DragState {
     }
     .connection-path {
       fill: none;
-      stroke: #6c63ff;
+      stroke: #7c5cff;
       stroke-width: 2.5;
       pointer-events: stroke;
       cursor: pointer;
@@ -56,7 +56,7 @@ interface DragState {
     }
     .connection-ghost {
       fill: none;
-      stroke: #6c63ff;
+      stroke: #7c5cff;
       stroke-width: 2;
       stroke-dasharray: 8 4;
       opacity: 0.7;

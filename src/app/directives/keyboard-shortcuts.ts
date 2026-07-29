@@ -1,6 +1,7 @@
 import { Directive, inject, HostListener } from '@angular/core';
 import { GraphService } from '../services/graph.service';
 import { HistoryService } from '../services/history.service';
+import { SidebarService } from '../services/sidebar.service';
 import { DeleteNodeCompoundCommand } from '../services/commands';
 
 @Directive({
@@ -10,12 +11,20 @@ import { DeleteNodeCompoundCommand } from '../services/commands';
 export class KeyboardShortcuts {
   private graphService = inject(GraphService);
   private historyService = inject(HistoryService);
+  private sidebarService = inject(SidebarService);
 
   @HostListener('document:keydown', ['$event'])
   onKeyDown(event: KeyboardEvent): void {
     // Don't handle shortcuts when typing in an input
     const target = event.target as HTMLElement;
     if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) {
+      return;
+    }
+
+    // Ctrl+B: Toggle the Sidebar (a UI preference — never touches History)
+    if (event.ctrlKey && !event.shiftKey && !event.altKey && event.key.toLowerCase() === 'b') {
+      event.preventDefault();
+      this.sidebarService.toggle();
       return;
     }
 

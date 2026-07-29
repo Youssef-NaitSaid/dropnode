@@ -1,5 +1,9 @@
 import { Component, signal, inject, ChangeDetectionStrategy } from '@angular/core';
 import { FormsModule } from '@angular/forms';
+import { NgIcon, provideIcons } from '@ng-icons/core';
+import { lucideUpload, lucideX } from '@ng-icons/lucide';
+import { HlmButton } from '@spartan-ng/helm/button';
+import { HlmTextarea } from '@spartan-ng/helm/textarea';
 import { GraphService } from '../../services/graph.service';
 import { ToastService } from '../toast/toast';
 
@@ -7,195 +11,74 @@ import { ToastService } from '../toast/toast';
   selector: 'app-import-dialog',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [FormsModule],
+  imports: [FormsModule, NgIcon, HlmButton, HlmTextarea],
+  providers: [provideIcons({ lucideUpload, lucideX })],
   template: `
     @if (isOpen()) {
-      <div class="dialog-overlay" (click)="close()">
-        <div class="dialog-content" (click)="$event.stopPropagation()">
-          <h2 class="dialog-title">Import Graph</h2>
+      <div class="fixed inset-0 z-100 flex items-center justify-center bg-black/60 p-4" (click)="close()">
+        <div
+          class="w-[480px] max-w-[90vw] rounded-xl border border-border bg-card text-card-foreground p-6 shadow-2xl"
+          (click)="$event.stopPropagation()"
+        >
+          <div class="flex items-center justify-between mb-5">
+            <h2 class="text-lg font-semibold">Import Graph</h2>
+            <button hlmBtn variant="ghost" size="icon-sm" (click)="close()" aria-label="Close">
+              <ng-icon name="lucideX" />
+            </button>
+          </div>
 
-          <div class="dialog-tabs">
+          <div class="flex gap-1 mb-4 rounded-lg bg-muted p-1">
             <button
-              class="tab-btn"
-              [class.active]="activeTab() === 'file'"
+              hlmBtn
+              [variant]="activeTab() === 'file' ? 'secondary' : 'ghost'"
+              size="sm"
+              class="flex-1"
               (click)="activeTab.set('file')"
             >File Upload</button>
             <button
-              class="tab-btn"
-              [class.active]="activeTab() === 'text'"
+              hlmBtn
+              [variant]="activeTab() === 'text' ? 'secondary' : 'ghost'"
+              size="sm"
+              class="flex-1"
               (click)="activeTab.set('text')"
             >Paste JSON</button>
           </div>
 
           @if (activeTab() === 'file') {
-            <div class="file-upload-area">
+            <div class="rounded-lg border-2 border-dashed border-border p-8 text-center mb-4">
+              <ng-icon name="lucideUpload" class="text-2xl text-muted-foreground" />
               <input
                 type="file"
                 accept=".json"
                 (change)="onFileSelected($event)"
-                class="file-input"
+                class="mt-3 block w-full text-sm text-muted-foreground file:mr-3 file:rounded-md file:border-0 file:bg-primary file:px-4 file:py-2 file:text-sm file:text-primary-foreground hover:file:bg-primary/80"
               />
-              <p class="file-hint">Select a .json file to import</p>
+              <p class="mt-2 text-xs text-muted-foreground">Select a .json file to import</p>
             </div>
           }
 
           @if (activeTab() === 'text') {
             <textarea
-              class="json-input"
+              hlmTextarea
+              class="w-full mb-4 font-mono text-xs"
               [(ngModel)]="jsonText"
-              placeholder='Paste your JSON here...'
+              placeholder="Paste your JSON here..."
               rows="10"
             ></textarea>
           }
 
           @if (errorMessage()) {
-            <p class="error-message">{{ errorMessage() }}</p>
+            <p class="text-destructive text-sm mb-3">{{ errorMessage() }}</p>
           }
 
-          <div class="dialog-actions">
-            <button class="btn btn-cancel" (click)="close()">Cancel</button>
-            <button
-              class="btn btn-import"
-              [disabled]="!canImport()"
-              (click)="doImport()"
-            >Import</button>
+          <div class="flex justify-end gap-2">
+            <button hlmBtn variant="outline" (click)="close()">Cancel</button>
+            <button hlmBtn [disabled]="!canImport()" (click)="doImport()">Import</button>
           </div>
         </div>
       </div>
     }
   `,
-  styles: [`
-    .dialog-overlay {
-      position: fixed;
-      inset: 0;
-      background: rgba(0,0,0,0.6);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      z-index: 100;
-    }
-    .dialog-content {
-      background: #252542;
-      border-radius: 12px;
-      padding: 24px;
-      width: 480px;
-      max-width: 90vw;
-      box-shadow: 0 8px 32px rgba(0,0,0,0.4);
-    }
-    .dialog-title {
-      color: #f0f0f5;
-      font-size: 20px;
-      font-weight: 600;
-      margin: 0 0 20px 0;
-    }
-    .dialog-tabs {
-      display: flex;
-      gap: 4px;
-      margin-bottom: 16px;
-      background: #1a1a2e;
-      border-radius: 8px;
-      padding: 4px;
-    }
-    .tab-btn {
-      flex: 1;
-      padding: 8px 16px;
-      border: none;
-      border-radius: 6px;
-      background: transparent;
-      color: #8888aa;
-      font-size: 14px;
-      font-weight: 500;
-      cursor: pointer;
-      transition: all 0.15s ease;
-    }
-    .tab-btn.active {
-      background: #6c63ff;
-      color: white;
-    }
-    .tab-btn:hover:not(.active) {
-      color: #f0f0f5;
-    }
-    .file-upload-area {
-      border: 2px dashed #3a3a5c;
-      border-radius: 8px;
-      padding: 32px;
-      text-align: center;
-      margin-bottom: 16px;
-    }
-    .file-input {
-      color: #8888aa;
-      font-size: 14px;
-    }
-    .file-input::file-selector-button {
-      background: #6c63ff;
-      color: white;
-      border: none;
-      padding: 8px 16px;
-      border-radius: 6px;
-      cursor: pointer;
-      margin-right: 12px;
-      font-size: 14px;
-    }
-    .file-hint {
-      color: #8888aa;
-      font-size: 13px;
-      margin-top: 8px;
-    }
-    .json-input {
-      width: 100%;
-      background: #1a1a2e;
-      border: 1px solid #3a3a5c;
-      border-radius: 8px;
-      color: #f0f0f5;
-      font-family: 'JetBrains Mono', 'Fira Code', monospace;
-      font-size: 13px;
-      padding: 12px;
-      resize: vertical;
-      margin-bottom: 16px;
-      box-sizing: border-box;
-    }
-    .json-input:focus {
-      outline: none;
-      border-color: #6c63ff;
-    }
-    .error-message {
-      color: #ff4757;
-      font-size: 13px;
-      margin-bottom: 12px;
-    }
-    .dialog-actions {
-      display: flex;
-      justify-content: flex-end;
-      gap: 8px;
-    }
-    .btn {
-      padding: 8px 20px;
-      border: none;
-      border-radius: 6px;
-      font-size: 14px;
-      font-weight: 500;
-      cursor: pointer;
-      transition: all 0.15s ease;
-    }
-    .btn-cancel {
-      background: #3a3a5c;
-      color: #f0f0f5;
-    }
-    .btn-cancel:hover {
-      background: #4a4a6c;
-    }
-    .btn-import {
-      background: #6c63ff;
-      color: white;
-    }
-    .btn-import:hover:not(:disabled) {
-      background: #5a52e0;
-    }
-    .btn-import:disabled {
-      opacity: 0.5;
-      cursor: not-allowed;
-    }
-  `],
 })
 export class ImportDialogComponent {
   private graphService = inject(GraphService);

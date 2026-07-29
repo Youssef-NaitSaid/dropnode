@@ -25,8 +25,8 @@ import { HandleSide } from '../../models/node';
       width: 12px;
       height: 12px;
       border-radius: 50%;
-      background: #6c63ff;
-      border: 2px solid #1a1a2e;
+      background: #7c5cff;
+      border: 2px solid #0e0e11;
       cursor: crosshair;
       transition: transform 0.15s ease, background 0.15s ease;
     }

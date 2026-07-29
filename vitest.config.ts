@@ -1,8 +1,9 @@
 import { defineConfig } from 'vitest/config';
 import angular from '@analogjs/vite-plugin-angular';
+import tsConfigPaths from 'vite-tsconfig-paths';
 
 export default defineConfig({
-  plugins: [angular()],
+  plugins: [angular(), tsConfigPaths()],
   test: {
     globals: true,
     environment: 'jsdom',

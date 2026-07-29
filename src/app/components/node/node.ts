@@ -95,8 +95,8 @@ const GROUP_FILL_ALPHA = '4D';
     .node-card {
       position: absolute;
       background: #f0f0f5;
-      border: 2px solid #3a3a5c;
-      border-radius: 8px;
+      border: 1px solid rgba(15, 15, 18, 0.15);
+      border-radius: 10px;
       padding: 8px 16px;
       cursor: grab;
       user-select: none;
@@ -107,21 +107,23 @@ const GROUP_FILL_ALPHA = '4D';
       min-height: 48px;
       box-sizing: border-box;
       overflow: visible;
-      box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+      box-shadow: 0 2px 10px rgba(0, 0, 0, 0.45);
       transition: border-color 0.15s ease, box-shadow 0.15s ease;
     }
     .node-card:hover {
-      box-shadow: 0 4px 16px rgba(108,99,255,0.2);
+      box-shadow: 0 6px 20px rgba(124, 92, 255, 0.28);
     }
     .node-card.selected {
-      border-color: #6c63ff;
-      box-shadow: 0 0 0 2px rgba(108,99,255,0.3), 0 4px 16px rgba(108,99,255,0.2);
+      border-color: #7c5cff;
+      box-shadow: 0 0 0 2px rgba(124, 92, 255, 0.4), 0 6px 20px rgba(124, 92, 255, 0.25);
     }
     .group-card {
       padding: 0;
       align-items: flex-start;
       justify-content: flex-start;
       border-style: dashed;
+      border-width: 2px;
+      border-color: rgba(255, 255, 255, 0.22);
       box-shadow: none;
     }
     .group-label-strip {
@@ -151,7 +153,7 @@ const GROUP_FILL_ALPHA = '4D';
     .node-label-input {
       background: transparent;
       border: none;
-      border-bottom: 2px solid #6c63ff;
+      border-bottom: 2px solid #7c5cff;
       color: #1a1a2e;
       font-size: 14px;
       font-weight: 500;
@@ -195,8 +197,8 @@ const GROUP_FILL_ALPHA = '4D';
       width: 10px;
       height: 10px;
       border-radius: 2px;
-      background: #6c63ff;
-      border: 2px solid #1a1a2e;
+      background: #7c5cff;
+      border: 2px solid #0e0e11;
       z-index: 11;
     }
     .grip-nw { top: -5px; left: -5px; cursor: nwse-resize; }
