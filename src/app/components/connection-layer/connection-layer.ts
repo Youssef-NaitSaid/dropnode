@@ -1,4 +1,4 @@
-import { Component, computed, input, output, signal, ChangeDetectionStrategy, inject } from '@angular/core';
+import { Component, computed, effect, input, output, signal, viewChild, ChangeDetectionStrategy, ElementRef, inject } from '@angular/core';
 import { GraphNode, HandleSide } from '../../models/node';
 import { Connection } from '../../models/connection';
 import { GraphService } from '../../services/graph.service';
@@ -41,6 +41,7 @@ interface DragState {
       @for (conn of connections(); track conn.id) {
         @if (editingConnectionId() === conn.id) {
           <input
+            #labelInput
             class="connection-label-input"
             [style.left.px]="getLabelMidpoint(conn).x"
             [style.top.px]="getLabelMidpoint(conn).y"
@@ -49,7 +50,7 @@ interface DragState {
             (keydown.enter)="finishLabelEdit(conn, $event)"
             (keydown.escape)="cancelLabelEdit()"
             (mousedown)="$event.stopPropagation()"
-            autofocus
+            (dblclick)="$event.stopPropagation()"
           />
         } @else if (conn.label) {
           <div
@@ -160,6 +161,20 @@ export class ConnectionLayerComponent {
 
   // Connection whose label is being edited inline, if any
   editingConnectionId = signal<string | null>(null);
+
+  private labelInput = viewChild<ElementRef<HTMLInputElement>>('labelInput');
+
+  constructor() {
+    // autofocus doesn't fire for dynamically inserted inputs; focus and
+    // select the text once the editor renders
+    effect(() => {
+      const input = this.labelInput()?.nativeElement;
+      if (input) {
+        input.focus();
+        input.select();
+      }
+    });
+  }
 
   connectionSelect = output<string>();
   labelCommit = output<{ connectionId: string; newLabel: string }>();

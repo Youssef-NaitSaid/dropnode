@@ -63,7 +63,7 @@
 - during a connection drag a dashed ghost bezier renders from the source Handle to the cursor
 - clicking a Connection path or its Label selects the Connection; Delete or Backspace deletes the selected Connection as one undoable Command
 - selection is exclusive: at most one element (Node or Connection) is selected at a time — selecting one kind deselects the other, and clicking empty Canvas or pressing Escape clears whichever is selected
-- a Connection carries an optional Label; double-clicking the path or Label opens inline editing at the curve midpoint — Enter or blur commits, Escape cancels, and committing empty removes the Label (deliberate deviation from the Node rule)
+- a Connection carries an optional Label; double-clicking the path or Label opens inline editing at the curve midpoint with the text focused and selected — Enter or blur commits, Escape cancels, and committing empty removes the Label (deliberate deviation from the Node rule)
 - setting or clearing a Connection Label is one undoable SetConnectionLabelCommand; committing unchanged text pushes nothing onto History; createConnection never sets a label
 - a Connection Label renders as horizontal text on an opaque pill centered at the cubic bezier midpoint, moving with the curve; the pill is part of the Connection's hit area
 - Connections render as cubic beziers; control points extend perpendicular to each Handle's edge, offset clamped between 40 and 150 (distance x 0.4)
