@@ -2,8 +2,13 @@ import {
   Component, inject, signal, computed, ChangeDetectionStrategy,
   HostListener, ElementRef, viewChild,
 } from '@angular/core';
+import { CdkContextMenuTrigger } from '@angular/cdk/menu';
+import { NgIcon, provideIcons } from '@ng-icons/core';
+import { lucideSquarePlus, lucideGroup, lucidePencil, lucideTag, lucideTrash2 } from '@ng-icons/lucide';
+import { HlmDropdownMenu, HlmDropdownMenuItem } from '@spartan-ng/helm/dropdown-menu';
 import { GraphService } from '../../services/graph.service';
 import { HistoryService } from '../../services/history.service';
+import { ContextMenuService } from '../../services/context-menu.service';
 import {
   CreateNodeCommand,
   MoveNodeCommand,
@@ -25,60 +30,112 @@ import { HandleSide } from '../../models/node';
   selector: 'app-canvas',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [NodeComponent, ConnectionLayerComponent],
+  imports: [
+    NodeComponent, ConnectionLayerComponent, NgIcon,
+    CdkContextMenuTrigger, HlmDropdownMenu, HlmDropdownMenuItem,
+  ],
+  providers: [
+    provideIcons({ lucideSquarePlus, lucideGroup, lucidePencil, lucideTag, lucideTrash2 }),
+  ],
   template: `
-    <div
-      class="canvas-container"
-      [class.panning]="isPanning"
-      (dblclick)="onCanvasDoubleClick($event)"
-      (mousedown)="onCanvasMouseDown($event)"
-      (wheel)="onWheel($event)"
-    >
+    <div class="canvas-viewport" [cdkContextMenuTriggerFor]="contextMenu">
       <div
-        class="canvas-transform"
-        [style.transform]="transformStyle()"
+        class="canvas-container"
+        [class.panning]="isPanning"
+        (dblclick)="onCanvasDoubleClick($event)"
+        (mousedown)="onCanvasMouseDown($event)"
+        (contextmenu)="onContextMenu($event)"
+        (wheel)="onWheel($event)"
       >
-        <!-- ADR-0008 stacking: Group cards, then Connections, then regular nodes,
-             so Connections stay clickable over a Group's rect -->
-        <div class="nodes-container">
-          @for (node of groupNodes(); track node.id) {
-            <app-node
-              [node]="node"
-              [isSelected]="graphService.selectedNodeId() === node.id"
-              [snapTarget]="currentSnapTarget"
-              (startMove)="onNodeStartMove($event)"
-              (rename)="onNodeRename($event)"
-              (handleDragStart)="onHandleDragStart($event)"
-              (sizeChanged)="onNodeSizeChanged($event)"
-              (startResize)="onNodeStartResize($event)"
-              (createChild)="onCreateChild($event)"
-            />
-          }
-        </div>
+        <div
+          class="canvas-transform"
+          [style.transform]="transformStyle()"
+        >
+          <!-- ADR-0008 stacking: Group cards, then Connections, then regular nodes,
+               so Connections stay clickable over a Group's rect -->
+          <div class="nodes-container">
+            @for (node of groupNodes(); track node.id) {
+              <app-node
+                [node]="node"
+                [isSelected]="graphService.selectedNodeId() === node.id"
+                [snapTarget]="currentSnapTarget"
+                (startMove)="onNodeStartMove($event)"
+                (rename)="onNodeRename($event)"
+                (handleDragStart)="onHandleDragStart($event)"
+                (sizeChanged)="onNodeSizeChanged($event)"
+                (startResize)="onNodeStartResize($event)"
+                (createChild)="onCreateChild($event)"
+              />
+            }
+          </div>
 
-        <app-connection-layer
-          #connectionLayer
-          (connectionSelect)="onConnectionSelect($event)"
-          (labelCommit)="onConnectionLabelCommit($event)"
-        />
+          <app-connection-layer
+            #connectionLayer
+            (connectionSelect)="onConnectionSelect($event)"
+            (labelCommit)="onConnectionLabelCommit($event)"
+          />
 
-        <div class="nodes-container">
-          @for (node of regularNodes(); track node.id) {
-            <app-node
-              [node]="node"
-              [isSelected]="graphService.selectedNodeId() === node.id"
-              [snapTarget]="currentSnapTarget"
-              (startMove)="onNodeStartMove($event)"
-              (rename)="onNodeRename($event)"
-              (handleDragStart)="onHandleDragStart($event)"
-              (sizeChanged)="onNodeSizeChanged($event)"
-              (startResize)="onNodeStartResize($event)"
-              (createChild)="onCreateChild($event)"
-            />
-          }
+          <div class="nodes-container">
+            @for (node of regularNodes(); track node.id) {
+              <app-node
+                [node]="node"
+                [isSelected]="graphService.selectedNodeId() === node.id"
+                [snapTarget]="currentSnapTarget"
+                (startMove)="onNodeStartMove($event)"
+                (rename)="onNodeRename($event)"
+                (handleDragStart)="onHandleDragStart($event)"
+                (sizeChanged)="onNodeSizeChanged($event)"
+                (startResize)="onNodeStartResize($event)"
+                (createChild)="onCreateChild($event)"
+              />
+            }
+          </div>
         </div>
       </div>
     </div>
+
+    <ng-template #contextMenu>
+      <div hlmDropdownMenu class="w-44">
+        @switch (contextMenuService.menuKind()) {
+          @case ('canvas') {
+            <button hlmDropdownMenuItem (triggered)="contextMenuService.addNode()">
+              <ng-icon name="lucideSquarePlus" />
+              <span>Add node</span>
+            </button>
+            <button hlmDropdownMenuItem (triggered)="contextMenuService.addGroup()">
+              <ng-icon name="lucideGroup" />
+              <span>Add group</span>
+            </button>
+          }
+          @case ('node') {
+            @if (contextMenuService.targetIsGroup()) {
+              <button hlmDropdownMenuItem (triggered)="contextMenuService.addNode()">
+                <ng-icon name="lucideSquarePlus" />
+                <span>Add node</span>
+              </button>
+            }
+            <button hlmDropdownMenuItem (triggered)="contextMenuService.rename()">
+              <ng-icon name="lucidePencil" />
+              <span>Rename</span>
+            </button>
+            <button hlmDropdownMenuItem variant="destructive" (triggered)="contextMenuService.deleteTarget()">
+              <ng-icon name="lucideTrash2" />
+              <span>Delete</span>
+            </button>
+          }
+          @case ('connection') {
+            <button hlmDropdownMenuItem (triggered)="contextMenuService.editLabel()">
+              <ng-icon name="lucideTag" />
+              <span>Edit label</span>
+            </button>
+            <button hlmDropdownMenuItem variant="destructive" (triggered)="contextMenuService.deleteTarget()">
+              <ng-icon name="lucideTrash2" />
+              <span>Delete</span>
+            </button>
+          }
+        }
+      </div>
+    </ng-template>
   `,
   styles: [`
     :host {
@@ -86,6 +143,10 @@ import { HandleSide } from '../../models/node';
       width: 100%;
       height: 100%;
       overflow: hidden;
+    }
+    .canvas-viewport {
+      width: 100%;
+      height: 100%;
     }
     .canvas-container {
       width: 100%;
@@ -117,6 +178,7 @@ import { HandleSide } from '../../models/node';
 })
 export class CanvasComponent {
   graphService = inject(GraphService);
+  contextMenuService = inject(ContextMenuService);
   private historyService = inject(HistoryService);
 
   private connectionLayer = viewChild<ConnectionLayerComponent>('connectionLayer');
@@ -195,6 +257,9 @@ export class CanvasComponent {
 
   onCanvasMouseDown(event: MouseEvent): void {
     if ((event.target as HTMLElement).closest('app-node')) return;
+    // Left button only — right-click is reserved for the context menu and
+    // must never start a pan or clear selection (the menu handles that)
+    if (event.button !== 0) return;
 
     this.isPanning = true;
     this.panStartX = event.clientX;
@@ -204,6 +269,35 @@ export class CanvasComponent {
     this.panStartPanY = vp.panY;
 
     this.graphService.selectNode(null);
+  }
+
+  // Right-click: select the target and prime the context menu with the
+  // right-click point (in canvas coords). The CdkContextMenuTrigger on the
+  // outer element opens the menu; inline text inputs stop propagation so the
+  // native browser menu still works there.
+  onContextMenu(event: MouseEvent): void {
+    const el = event.target as HTMLElement;
+    const canvasPos = this.clientPointToCanvas(event.clientX, event.clientY) ?? { x: 0, y: 0 };
+
+    const nodeEl = el.closest('[data-node-id]');
+    if (nodeEl) {
+      this.contextMenuService.openFor(
+        { kind: 'node', nodeId: nodeEl.getAttribute('data-node-id')! },
+        canvasPos.x, canvasPos.y,
+      );
+      return;
+    }
+
+    const connEl = el.closest('[data-connection-id]');
+    if (connEl) {
+      this.contextMenuService.openFor(
+        { kind: 'connection', connectionId: connEl.getAttribute('data-connection-id')! },
+        canvasPos.x, canvasPos.y,
+      );
+      return;
+    }
+
+    this.contextMenuService.openFor({ kind: 'canvas' }, canvasPos.x, canvasPos.y);
   }
 
   onWheel(event: WheelEvent): void {

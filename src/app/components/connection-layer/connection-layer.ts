@@ -2,6 +2,7 @@ import { Component, computed, effect, input, output, signal, viewChild, ChangeDe
 import { GraphNode, HandleSide } from '../../models/node';
 import { Connection } from '../../models/connection';
 import { GraphService } from '../../services/graph.service';
+import { ContextMenuService } from '../../services/context-menu.service';
 
 interface DragState {
   sourceNodeId: string;
@@ -21,6 +22,7 @@ interface DragState {
       @for (conn of connections(); track conn.id) {
         <path
           [attr.d]="getConnectionPath(conn)"
+          [attr.data-connection-id]="conn.id"
           class="connection-path"
           [class.selected]="isSelected(conn.id)"
           (mousedown)="onConnectionMouseDown(conn, $event)"
@@ -51,10 +53,12 @@ interface DragState {
             (keydown.escape)="cancelLabelEdit()"
             (mousedown)="$event.stopPropagation()"
             (dblclick)="$event.stopPropagation()"
+            (contextmenu)="$event.stopPropagation()"
           />
         } @else if (conn.label) {
           <div
             class="connection-label"
+            [attr.data-connection-id]="conn.id"
             [class.selected]="isSelected(conn.id)"
             [style.left.px]="getLabelMidpoint(conn).x"
             [style.top.px]="getLabelMidpoint(conn).y"
@@ -163,6 +167,7 @@ export class ConnectionLayerComponent {
   editingConnectionId = signal<string | null>(null);
 
   private labelInput = viewChild<ElementRef<HTMLInputElement>>('labelInput');
+  private contextMenuService = inject(ContextMenuService);
 
   constructor() {
     // autofocus doesn't fire for dynamically inserted inputs; focus and
@@ -172,6 +177,15 @@ export class ConnectionLayerComponent {
       if (input) {
         input.focus();
         input.select();
+      }
+    });
+
+    // The context menu's "Edit label" opens this Connection's inline editor
+    effect(() => {
+      const id = this.contextMenuService.editLabelRequest();
+      if (id && this.connections().some(c => c.id === id)) {
+        this.editingConnectionId.set(id);
+        this.contextMenuService.clearEditLabelRequest();
       }
     });
   }

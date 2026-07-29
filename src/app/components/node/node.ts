@@ -1,9 +1,10 @@
 import {
   Component, input, output, signal, computed, effect,
-  ChangeDetectionStrategy, AfterViewInit, viewChild, ElementRef,
+  ChangeDetectionStrategy, AfterViewInit, viewChild, ElementRef, inject,
 } from '@angular/core';
 import { GraphNode, HandleSide } from '../../models/node';
 import { HandleComponent } from '../handle/handle';
+import { ContextMenuService } from '../../services/context-menu.service';
 
 export type GripCorner = 'nw' | 'ne' | 'sw' | 'se';
 
@@ -21,6 +22,7 @@ const GROUP_FILL_ALPHA = '4D';
       class="node-card"
       [class.group-card]="isGroup()"
       [class.selected]="isSelected()"
+      [attr.data-node-id]="node().id"
       [style.left.px]="node().x"
       [style.top.px]="node().y"
       [style.width.px]="node().width"
@@ -40,6 +42,7 @@ const GROUP_FILL_ALPHA = '4D';
               (keydown.enter)="finishEdit($event)"
               (keydown.escape)="cancelEdit()"
               (mousedown)="$event.stopPropagation()"
+              (contextmenu)="$event.stopPropagation()"
             />
           } @else {
             <span class="group-label">{{ node().label }}</span>
@@ -55,6 +58,7 @@ const GROUP_FILL_ALPHA = '4D';
             (keydown.enter)="finishEdit($event)"
             (keydown.escape)="cancelEdit()"
             (mousedown)="$event.stopPropagation()"
+            (contextmenu)="$event.stopPropagation()"
           />
         } @else {
           <span #labelRef class="node-label">{{ node().label }}</span>
@@ -221,6 +225,7 @@ export class NodeComponent implements AfterViewInit {
   sizeChanged = output<{ nodeId: string; width: number; height: number }>();
 
   private editInput = viewChild<ElementRef<HTMLInputElement>>('editInput');
+  private contextMenuService = inject(ContextMenuService);
 
   constructor() {
     // autofocus doesn't fire for dynamically inserted inputs; focus and
@@ -230,6 +235,14 @@ export class NodeComponent implements AfterViewInit {
       if (input) {
         input.focus();
         input.select();
+      }
+    });
+
+    // The context menu's "Rename" opens this node's inline editor
+    effect(() => {
+      if (this.contextMenuService.renameRequest() === this.node().id) {
+        this.isEditing.set(true);
+        this.contextMenuService.clearRenameRequest();
       }
     });
   }
@@ -252,6 +265,8 @@ export class NodeComponent implements AfterViewInit {
 
   onMouseDown(event: MouseEvent): void {
     if (this.isEditing()) return;
+    // Left button only — right-click is reserved for the context menu
+    if (event.button !== 0) return;
     event.stopPropagation();
     this.startMove.emit({ nodeId: this.node().id, event });
   }
@@ -294,6 +309,8 @@ export class NodeComponent implements AfterViewInit {
   }
 
   onGripMouseDown(corner: GripCorner, event: MouseEvent): void {
+    // Left button only — right-click is reserved for the context menu
+    if (event.button !== 0) return;
     event.stopPropagation();
     event.preventDefault();
     this.startResize.emit({

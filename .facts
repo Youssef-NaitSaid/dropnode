@@ -138,6 +138,17 @@
 - all keyboard shortcuts are ignored while focus is in an input, textarea, or contenteditable element
 - Delete or Backspace deletes the selected element — a Connection alone, or a Node with its Connections; Escape deselects and blurs the active element
 
+## context menu
+
+- right-clicking opens a Context Menu scoped to its target: empty Canvas offers Add node and Add group; a Node offers Rename and Delete; a Group offers Add node, Rename, and Delete; a Connection offers Edit label and Delete
+- label: the Context Menu is built on @angular/cdk/menu CdkContextMenuTrigger and reuses the styled Helm dropdown-menu content; its logic lives in ContextMenuService, never in components
+  command: grep -q 'CdkContextMenuTrigger' src/app/components/canvas/canvas.ts && grep -q 'ContextMenuService' src/app/services/context-menu.service.ts
+- right-clicking a target selects it before the menu opens (exclusive selection applies); right-clicking empty Canvas clears the selection and never starts a pan — panning is left-button only
+- Add node and Add group create centered on the right-click point (Node offset 60/24, Group offset 160/100); Add node on a Group creates a child of that Group at the point
+- menu Rename opens the target Node or Group's existing inline label editor; Edit label opens the Connection's midpoint Label editor — both reuse the double-click editors and their commit rules
+- menu Delete runs the same Commands as the Delete/Backspace shortcut, with identical cascade and undo behavior; opening or dismissing a menu never touches History
+- the native browser context menu is suppressed on the Canvas, Nodes, Groups, and Connections, but preserved inside inline text inputs (label editors stop propagation of the contextmenu event)
+
 ## ui
 
 - a single toast shows at bottom-right; a new toast replaces the current one and resets the 4-second auto-dismiss timer
