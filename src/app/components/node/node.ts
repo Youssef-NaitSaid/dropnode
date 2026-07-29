@@ -1,5 +1,5 @@
 import {
-  Component, input, output, signal, computed,
+  Component, input, output, signal, computed, effect,
   ChangeDetectionStrategy, AfterViewInit, viewChild, ElementRef,
 } from '@angular/core';
 import { GraphNode, HandleSide } from '../../models/node';
@@ -33,13 +33,13 @@ const GROUP_FILL_ALPHA = '4D';
         <div class="group-label-strip" (dblclick)="onLabelStripDoubleClick($event)">
           @if (isEditing()) {
             <input
+              #editInput
               class="node-label-input group-label-input"
               [value]="node().label"
               (blur)="finishEdit($event)"
               (keydown.enter)="finishEdit($event)"
               (keydown.escape)="cancelEdit()"
               (mousedown)="$event.stopPropagation()"
-              autofocus
             />
           } @else {
             <span class="group-label">{{ node().label }}</span>
@@ -48,13 +48,13 @@ const GROUP_FILL_ALPHA = '4D';
       } @else {
         @if (isEditing()) {
           <input
+            #editInput
             class="node-label-input"
             [value]="node().label"
             (blur)="finishEdit($event)"
             (keydown.enter)="finishEdit($event)"
             (keydown.escape)="cancelEdit()"
             (mousedown)="$event.stopPropagation()"
-            autofocus
           />
         } @else {
           <span #labelRef class="node-label">{{ node().label }}</span>
@@ -219,6 +219,20 @@ export class NodeComponent implements AfterViewInit {
   createChild = output<{ parentId: string; clientX: number; clientY: number }>();
   private labelRef = viewChild<ElementRef<HTMLSpanElement>>('labelRef');
   sizeChanged = output<{ nodeId: string; width: number; height: number }>();
+
+  private editInput = viewChild<ElementRef<HTMLInputElement>>('editInput');
+
+  constructor() {
+    // autofocus doesn't fire for dynamically inserted inputs; focus and
+    // select the text once the editor renders
+    effect(() => {
+      const input = this.editInput()?.nativeElement;
+      if (input) {
+        input.focus();
+        input.select();
+      }
+    });
+  }
 
   isEditing = signal(false);
   handleSides: HandleSide[] = ['top', 'right', 'bottom', 'left'];

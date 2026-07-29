@@ -26,7 +26,7 @@
 - four Resize Grips show at the corners of the selected node only; dragging one resizes with the opposite corner anchored
 - a grip drag clamps width to the label-derived minimum (max of 120 and the measured label width) and height to 48
 - an entire grip drag is one undo step: per-mousemove size updates bypass History, and a single ResizeNodeCommand is pushed on mouseup only if the rect changed more than 2px
-- double-clicking a Node opens inline label editing; Enter or blur commits, Escape cancels; empty or unchanged labels are never committed
+- double-clicking a Node opens inline label editing with the text focused and selected; Enter or blur commits, Escape cancels; empty or unchanged labels are never committed
 - renaming a Node is undoable and restores the exact previous label
 - deleting an unknown Node id throws "Node {id} not found"; deleting an unknown Connection id is a silent no-op
 - Node ids follow the pattern node_{timestamp}_{counter} and Connection ids conn_{timestamp}_{counter}; the counter is monotonic within a session
