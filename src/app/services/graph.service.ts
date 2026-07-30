@@ -1,6 +1,6 @@
 import { Injectable, signal, computed } from '@angular/core';
 import { GraphNode, HandleSide, NODE_PALETTE } from '../models/node';
-import { Connection } from '../models/connection';
+import { Connection, ArrowheadType, ArrowheadEnd, ARROWHEAD_TYPES, defaultArrowhead } from '../models/connection';
 import { GraphState } from '../models/graph-state';
 import { ViewportState } from '../models/viewport-state';
 import { Text, textFromString, isTextEmpty, validateText, canonicalizeText } from '../models/text';
@@ -287,6 +287,43 @@ export class GraphService {
     );
   }
 
+  // Connection color: null (the "default" swatch) removes the field entirely
+  setConnectionColor(id: string, color: string | null): void {
+    this.connections.update(conns =>
+      conns.map(c => {
+        if (c.id !== id) return c;
+        if (color === null) {
+          const { color: _removed, ...rest } = c;
+          return rest;
+        }
+        return { ...c, color };
+      })
+    );
+  }
+
+  // Connection Arrowhead: setting an endpoint to its default value removes the
+  // field (absent means default, ADR-0012), so only deviations are stored.
+  setConnectionArrowhead(id: string, end: ArrowheadEnd, type: ArrowheadType): void {
+    const isDefault = type === defaultArrowhead(end);
+    this.connections.update(conns =>
+      conns.map(c => {
+        if (c.id !== id) return c;
+        if (end === 'start') {
+          if (isDefault) {
+            const { startArrowhead: _removed, ...rest } = c;
+            return rest;
+          }
+          return { ...c, startArrowhead: type };
+        }
+        if (isDefault) {
+          const { endArrowhead: _removed, ...rest } = c;
+          return rest;
+        }
+        return { ...c, endArrowhead: type };
+      })
+    );
+  }
+
   // Selection is exclusive: at most one element (Node or Connection) at a time
   selectNode(id: string | null): void {
     this.selectedNodeId.set(id);
@@ -361,6 +398,10 @@ export class GraphService {
 
   private migrateConnection(conn: Connection): Connection {
     const { label, ...rest } = conn as Connection & { label?: string };
+    // Canonicalize Arrowheads: an explicitly-default value is dropped so only
+    // deviations persist (ADR-0012), matching the "absent means default" rule.
+    if (rest.startArrowhead === defaultArrowhead('start')) delete rest.startArrowhead;
+    if (rest.endArrowhead === defaultArrowhead('end')) delete rest.endArrowhead;
     if (conn.text) return { ...rest, text: canonicalizeText(conn.text) };
     if (label !== undefined && label.trim() !== '') {
       return { ...rest, text: textFromString(label) };
@@ -499,6 +540,15 @@ export class GraphService {
       } else if (conn['label'] !== undefined && typeof conn['label'] !== 'string') {
         // Legacy plain-string label, migrated on import
         return { valid: false, error: `Invalid connection ${connId}: label must be a string` };
+      }
+      if (conn['color'] !== undefined && !NODE_PALETTE.includes(conn['color'] as string)) {
+        return { valid: false, error: `Invalid connection ${connId}: color must be a palette color` };
+      }
+      if (conn['startArrowhead'] !== undefined && !ARROWHEAD_TYPES.includes(conn['startArrowhead'] as ArrowheadType)) {
+        return { valid: false, error: `Invalid connection ${connId}: startArrowhead must be none, arrow, or triangle` };
+      }
+      if (conn['endArrowhead'] !== undefined && !ARROWHEAD_TYPES.includes(conn['endArrowhead'] as ArrowheadType)) {
+        return { valid: false, error: `Invalid connection ${connId}: endArrowhead must be none, arrow, or triangle` };
       }
       const sourceId = conn['sourceNodeId'] as string;
       const targetId = conn['targetNodeId'] as string;

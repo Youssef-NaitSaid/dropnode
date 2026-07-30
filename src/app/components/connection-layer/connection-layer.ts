@@ -1,6 +1,6 @@
 import { Component, computed, effect, input, output, signal, ChangeDetectionStrategy, inject } from '@angular/core';
-import { GraphNode, HandleSide } from '../../models/node';
-import { Connection } from '../../models/connection';
+import { GraphNode, HandleSide, NODE_PALETTE } from '../../models/node';
+import { Connection, ArrowheadType, effectiveArrowhead } from '../../models/connection';
 import { Text, isTextEmpty } from '../../models/text';
 import { GraphService } from '../../services/graph.service';
 import { ContextMenuService } from '../../services/context-menu.service';
@@ -23,12 +23,34 @@ interface DragState {
   imports: [TextViewComponent, TextEditorComponent],
   template: `
     <svg class="connection-layer" [attr.width]="svgWidth()" [attr.height]="svgHeight()">
+      <defs>
+        @for (color of markerColors; track color) {
+          <marker
+            [attr.id]="markerId('arrow', color)"
+            viewBox="0 0 10 10" refX="9" refY="5"
+            markerWidth="7" markerHeight="7" orient="auto-start-reverse"
+          >
+            <path d="M1,1 L9,5 L1,9" fill="none" [attr.stroke]="color" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+          </marker>
+          <marker
+            [attr.id]="markerId('triangle', color)"
+            viewBox="0 0 10 10" refX="9" refY="5"
+            markerWidth="7" markerHeight="7" orient="auto-start-reverse"
+          >
+            <path d="M1,1 L9,5 L1,9 Z" [attr.fill]="color" />
+          </marker>
+        }
+      </defs>
       @for (conn of connections(); track conn.id) {
         <path
           [attr.d]="getConnectionPath(conn)"
           [attr.data-connection-id]="conn.id"
+          [attr.marker-start]="markerStart(conn)"
+          [attr.marker-end]="markerEnd(conn)"
           class="connection-path"
           [class.selected]="isSelected(conn.id)"
+          [style.stroke]="strokeColor(conn)"
+          [style.filter]="isSelected(conn.id) ? glowFilter(conn) : null"
           (mousedown)="onConnectionMouseDown(conn, $event)"
           (dblclick)="onConnectionDoubleClick(conn, $event)"
         />
@@ -90,16 +112,13 @@ interface DragState {
       stroke-width: 2.5;
       pointer-events: stroke;
       cursor: pointer;
-      transition: stroke 0.15s ease;
+      transition: stroke-width 0.15s ease, filter 0.15s ease;
     }
     .connection-path:hover {
-      stroke: #9d85ff;
       stroke-width: 3.5;
     }
     .connection-path.selected {
-      stroke: #7c5cff;
       stroke-width: 4;
-      filter: drop-shadow(0 0 4px rgba(124, 92, 255, 0.6));
     }
     .connection-ghost {
       fill: none;
@@ -149,6 +168,44 @@ export class ConnectionLayerComponent {
 
   nodes = this.graphService.nodes;
   connections = this.graphService.connections;
+
+  // Default stroke when a Connection carries no color (matches the CSS fallback)
+  private static readonly DEFAULT_STROKE = '#7c5cff';
+
+  // SVG markers don't inherit stroke color, so one marker is emitted per
+  // possible stroke color: the default plus every palette color.
+  readonly markerColors: readonly string[] = [
+    ConnectionLayerComponent.DEFAULT_STROKE,
+    ...NODE_PALETTE,
+  ];
+
+  markerId(type: 'arrow' | 'triangle', color: string): string {
+    return `ah-${type}-${color.replace('#', '')}`;
+  }
+
+  strokeColor(conn: Connection): string {
+    return conn.color ?? ConnectionLayerComponent.DEFAULT_STROKE;
+  }
+
+  // A colored Connection keeps its own color when selected; the glow matches it
+  glowFilter(conn: Connection): string {
+    return `drop-shadow(0 0 4px ${this.strokeColor(conn)})`;
+  }
+
+  markerStart(conn: Connection): string | null {
+    return this.markerRef(effectiveArrowhead(conn, 'start'), conn);
+  }
+
+  markerEnd(conn: Connection): string | null {
+    return this.markerRef(effectiveArrowhead(conn, 'end'), conn);
+  }
+
+  // A shared marker (orient="auto-start-reverse") serves both endpoints: it
+  // points outward at the start and into the target at the end.
+  private markerRef(type: ArrowheadType, conn: Connection): string | null {
+    if (type === 'none') return null;
+    return `url(#${this.markerId(type, this.strokeColor(conn))})`;
+  }
 
   svgWidth = computed(() => {
     const nodes = this.nodes();

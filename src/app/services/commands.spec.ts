@@ -17,6 +17,8 @@ import {
   CompoundCommand,
   SetNodeTextCommand,
   SetConnectionTextCommand,
+  SetConnectionColorCommand,
+  SetConnectionArrowheadCommand,
   InsertElementsCommand,
 } from './commands';
 
@@ -350,6 +352,90 @@ describe('Commands', () => {
 
       cmd.undo();
       expect(graphService.connections()[0].text).toEqual(textFromString('depends on'));
+    });
+  });
+
+  describe('SetConnectionColorCommand', () => {
+    function makeConn() {
+      const n1 = graphService.createNode('N1', 0, 0);
+      const n2 = graphService.createNode('N2', 100, 0);
+      return graphService.createConnection(n1.id, 'right', n2.id, 'left')!;
+    }
+
+    it('execute applies the color, undo restores the previous one', () => {
+      const conn = makeConn();
+      graphService.setConnectionColor(conn.id, NODE_PALETTE[1]);
+
+      const cmd = new SetConnectionColorCommand(graphService, conn.id, NODE_PALETTE[3]);
+      cmd.execute();
+      expect(graphService.connections()[0].color).toBe(NODE_PALETTE[3]);
+
+      cmd.undo();
+      expect(graphService.connections()[0].color).toBe(NODE_PALETTE[1]);
+    });
+
+    it('undo removes the color when there was none', () => {
+      const conn = makeConn();
+
+      const cmd = new SetConnectionColorCommand(graphService, conn.id, NODE_PALETTE[0]);
+      cmd.execute();
+      cmd.undo();
+
+      expect(graphService.connections()[0].color).toBeUndefined();
+    });
+
+    it('redo (execute after undo) re-applies the color', () => {
+      const conn = makeConn();
+
+      const cmd = new SetConnectionColorCommand(graphService, conn.id, NODE_PALETTE[2]);
+      cmd.execute();
+      cmd.undo();
+      cmd.execute();
+
+      expect(graphService.connections()[0].color).toBe(NODE_PALETTE[2]);
+    });
+  });
+
+  describe('SetConnectionArrowheadCommand', () => {
+    function makeConn() {
+      const n1 = graphService.createNode('N1', 0, 0);
+      const n2 = graphService.createNode('N2', 100, 0);
+      return graphService.createConnection(n1.id, 'right', n2.id, 'left')!;
+    }
+
+    it('execute sets the end Arrowhead, undo restores the default', () => {
+      const conn = makeConn();
+
+      const cmd = new SetConnectionArrowheadCommand(graphService, conn.id, 'end', 'triangle');
+      cmd.execute();
+      expect(graphService.connections()[0].endArrowhead).toBe('triangle');
+
+      cmd.undo();
+      // The end default is 'arrow', so undo removes the field
+      expect('endArrowhead' in graphService.connections()[0]).toBe(false);
+    });
+
+    it('undo restores a previously stored non-default value', () => {
+      const conn = makeConn();
+      graphService.setConnectionArrowhead(conn.id, 'start', 'arrow');
+
+      const cmd = new SetConnectionArrowheadCommand(graphService, conn.id, 'start', 'triangle');
+      cmd.execute();
+      expect(graphService.connections()[0].startArrowhead).toBe('triangle');
+
+      cmd.undo();
+      expect(graphService.connections()[0].startArrowhead).toBe('arrow');
+    });
+
+    it('setting the end to explicit none is undoable back to the arrow default', () => {
+      const conn = makeConn();
+
+      const cmd = new SetConnectionArrowheadCommand(graphService, conn.id, 'end', 'none');
+      cmd.execute();
+      expect(graphService.connections()[0].endArrowhead).toBe('none');
+
+      cmd.undo();
+      expect('endArrowhead' in graphService.connections()[0]).toBe(false);
     });
   });
 

@@ -1,6 +1,6 @@
 import { Command } from '../models/command';
 import { GraphNode, HandleSide } from '../models/node';
-import { Connection } from '../models/connection';
+import { Connection, ArrowheadType, ArrowheadEnd, effectiveArrowhead, defaultArrowhead } from '../models/connection';
 import { Text } from '../models/text';
 import { GraphService } from './graph.service';
 
@@ -223,6 +223,53 @@ export class SetConnectionTextCommand implements Command {
   undo(): void {
     // An absent original Text is restored by committing null (which clears it)
     this.graphService.setConnectionText(this.connectionId, this.originalText);
+  }
+}
+
+export class SetConnectionColorCommand implements Command {
+  description = 'Set Connection Color';
+  private originalColor: string | null;
+
+  constructor(
+    private graphService: GraphService,
+    private connectionId: string,
+    private newColor: string | null,
+  ) {
+    const conn = this.graphService.connections().find(c => c.id === connectionId);
+    this.originalColor = conn?.color ?? null;
+  }
+
+  execute(): void {
+    this.graphService.setConnectionColor(this.connectionId, this.newColor);
+  }
+
+  undo(): void {
+    this.graphService.setConnectionColor(this.connectionId, this.originalColor);
+  }
+}
+
+export class SetConnectionArrowheadCommand implements Command {
+  description = 'Set Connection Arrowhead';
+  private originalType: ArrowheadType;
+
+  constructor(
+    private graphService: GraphService,
+    private connectionId: string,
+    private end: ArrowheadEnd,
+    private newType: ArrowheadType,
+  ) {
+    const conn = this.graphService.connections().find(c => c.id === connectionId);
+    // Capture the effective value so undo restores the exact rendered state,
+    // whether the original was stored explicitly or left at its default.
+    this.originalType = conn ? effectiveArrowhead(conn, end) : defaultArrowhead(end);
+  }
+
+  execute(): void {
+    this.graphService.setConnectionArrowhead(this.connectionId, this.end, this.newType);
+  }
+
+  undo(): void {
+    this.graphService.setConnectionArrowhead(this.connectionId, this.end, this.originalType);
   }
 }
 
