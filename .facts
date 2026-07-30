@@ -125,7 +125,8 @@
   command: grep -q 'Export to Drive' src/app/components/toolbar/toolbar.ts && grep -q 'Export to Drive' src/app/components/sidebar/sidebar.ts && grep -q 'Export as' src/app/components/toolbar/toolbar.ts
 - label: the "Export as…" dialog offers PNG and JSON formats with a live preview; it defaults to PNG + dark Export Theme on every open and persists nothing
   command: grep -q "format.set('png')" src/app/components/export-dialog/export-dialog.ts && grep -q "theme.set('dark')" src/app/components/export-dialog/export-dialog.ts
-- the Export Theme (dark | light) applies only while rendering a PNG: it sets the image background and Group chrome defaults, applied Palette colors pass through, and it is never written to Graph State or the JSON payload
+- the "Export as…" dialog closes on Escape, backdrop click, or its close button — dismissal has no side effects and downloads nothing
+- the Export Theme (dark | light) applies only while rendering a PNG: it sets the image background and flips the dark-only defaults (Group chrome and Connection Text chips); default Node fills, Node Text, and the Connection stroke keep their on-screen appearance, applied Palette colors pass through, and nothing is ever written to Graph State or the JSON payload
 - PNG export snapshots the on-screen graph via a foreignObject-serialized clone of the canvas-transform layer (ADR-0014); it is offered only from the Scratch Canvas toolbar and the currently open Project's Sidebar row — other project rows keep Export JSON file
 - label: the PNG captures the full graph bounds plus 40 canvas-unit padding at 2x scale, independent of pan/zoom, stripping Handles, Resize Grips, and selection chrome; an empty graph exports just the padded background
   command: sh -c "grep -q 'EXPORT_PADDING = 40' src/app/models/export-image.ts && grep -q 'EXPORT_SCALE = 2' src/app/models/export-image.ts"

@@ -62,6 +62,8 @@ describe('Export Theme mapping', () => {
       nodeText: '#1a1a2e',
       groupBorder: 'rgba(255, 255, 255, 0.22)',
       groupLabel: '#f0f0f5',
+      connectionTextBackground: '#1c1c22',
+      connectionTextColor: '#e8e8ee',
     });
   });
 
@@ -72,6 +74,8 @@ describe('Export Theme mapping', () => {
       nodeText: '#1a1a2e',
       groupBorder: 'rgba(15, 15, 18, 0.3)',
       groupLabel: '#1a1a2e',
+      connectionTextBackground: '#ffffff',
+      connectionTextColor: '#1a1a2e',
     });
   });
 

@@ -56,26 +56,33 @@ export interface ExportThemeColors {
   nodeText: string;
   groupBorder: string;
   groupLabel: string;
+  connectionTextBackground: string;
+  connectionTextColor: string;
 }
 
 export const EXPORT_THEMES: Record<ExportTheme, ExportThemeColors> = {
-  // Mirrors the on-screen editor: near-black canvas, light node cards,
-  // translucent-white Group chrome.
+  // Mirrors the on-screen editor: near-black Canvas, light Nodes,
+  // translucent-white Group chrome, dark Connection Text chips.
   dark: {
     background: '#0e0e11',
     nodeBackground: '#f0f0f5',
     nodeText: '#1a1a2e',
     groupBorder: 'rgba(255, 255, 255, 0.22)',
     groupLabel: '#f0f0f5',
+    connectionTextBackground: '#1c1c22',
+    connectionTextColor: '#e8e8ee',
   },
-  // White background; only the dark-only defaults (Group chrome) flip —
-  // node cards and the Connection purple stay legible on white as-is.
+  // White background; the dark-only defaults flip (Group chrome, Connection
+  // Text chips) — default Node fills, Node Text, and the purple Connection
+  // stroke stay legible on white as-is.
   light: {
     background: '#ffffff',
     nodeBackground: '#f0f0f5',
     nodeText: '#1a1a2e',
     groupBorder: 'rgba(15, 15, 18, 0.3)',
     groupLabel: '#1a1a2e',
+    connectionTextBackground: '#ffffff',
+    connectionTextColor: '#1a1a2e',
   },
 };
 

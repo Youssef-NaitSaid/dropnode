@@ -17,6 +17,11 @@ export class ExportService {
     return JSON.stringify(graph ?? this.graphService.exportGraph(), null, 2);
   }
 
+  /** The exact payload every JSON destination serializes — the dialog previews this. */
+  jsonPayload(): string {
+    return this.graphAsJson();
+  }
+
   /** Filename-safe slug of a Project/Collection name; names are free-form. */
   private slug(name: string, fallback: string): string {
     const slugged = name

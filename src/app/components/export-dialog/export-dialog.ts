@@ -1,9 +1,11 @@
-import { Component, signal, computed, inject, effect, ChangeDetectionStrategy, OnDestroy } from '@angular/core';
+import {
+  Component, signal, computed, inject, effect, viewChild, ElementRef,
+  ChangeDetectionStrategy, OnDestroy,
+} from '@angular/core';
 import { NgIcon, provideIcons } from '@ng-icons/core';
 import { lucideX, lucideDownload } from '@ng-icons/lucide';
 import { HlmButton } from '@spartan-ng/helm/button';
 import { ExportService } from '../../services/export.service';
-import { GraphService } from '../../services/graph.service';
 import { ExportTheme } from '../../models/export-image';
 
 type ExportFormat = 'png' | 'json';
@@ -13,8 +15,9 @@ const PREVIEW_DEBOUNCE_MS = 150;
 /**
  * The "Export as…" dialog (issue #15): format (PNG | JSON), Export Theme
  * (dark | light, PNG only), and a live preview fed by the real snapshot
- * pipeline — what is previewed is byte-for-byte what downloads. Thin shell:
- * every decision lives in ExportService and the export-image model.
+ * pipeline — preview and download share renderPng, so they only differ if
+ * the graph changes in between. Thin shell: every decision lives in
+ * ExportService and the export-image model.
  */
 @Component({
   selector: 'app-export-dialog',
@@ -22,6 +25,7 @@ const PREVIEW_DEBOUNCE_MS = 150;
   changeDetection: ChangeDetectionStrategy.OnPush,
   imports: [NgIcon, HlmButton],
   providers: [provideIcons({ lucideX, lucideDownload })],
+  host: { '(document:keydown.escape)': 'onEscape()' },
   template: `
     @if (isOpen()) {
       <div class="fixed inset-0 z-100 flex items-center justify-center bg-black/60 p-4" (click)="close()">
@@ -34,7 +38,7 @@ const PREVIEW_DEBOUNCE_MS = 150;
         >
           <div class="flex items-center justify-between mb-5">
             <h2 class="text-lg font-semibold">Export as…</h2>
-            <button hlmBtn variant="ghost" size="icon-sm" (click)="close()" aria-label="Close">
+            <button #closeButton hlmBtn variant="ghost" size="icon-sm" (click)="close()" aria-label="Close">
               <ng-icon name="lucideX" />
             </button>
           </div>
@@ -108,7 +112,6 @@ const PREVIEW_DEBOUNCE_MS = 150;
 })
 export class ExportDialogComponent implements OnDestroy {
   private exportService = inject(ExportService);
-  private graphService = inject(GraphService);
 
   isOpen = signal(false);
   format = signal<ExportFormat>('png');
@@ -121,9 +124,9 @@ export class ExportDialogComponent implements OnDestroy {
   private debounceId: ReturnType<typeof setTimeout> | null = null;
   private renderTicket = 0;
 
-  jsonPreview = computed(() =>
-    JSON.stringify(this.graphService.exportGraph(), null, 2),
-  );
+  private closeButton = viewChild<ElementRef<HTMLButtonElement>>('closeButton');
+
+  jsonPreview = computed(() => this.exportService.jsonPayload());
 
   constructor() {
     // Regenerate the PNG preview (debounced) whenever the dialog is open in
@@ -133,6 +136,16 @@ export class ExportDialogComponent implements OnDestroy {
       const theme = this.theme();
       this.schedulePreview(theme);
     });
+
+    // Move focus into the dialog on open, so Escape/Tab land inside it.
+    effect(() => {
+      this.closeButton()?.nativeElement.focus();
+    });
+  }
+
+  /** Escape closes the dialog with no side effects, like the backdrop. */
+  onEscape(): void {
+    if (this.isOpen()) this.close();
   }
 
   /** Stateless dialog: every open resets to PNG + dark (spec decision). */

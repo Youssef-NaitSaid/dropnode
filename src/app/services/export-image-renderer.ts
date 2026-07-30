@@ -100,6 +100,10 @@ export class ExportImageRenderer {
     clone.querySelectorAll<HTMLElement>('.node-text').forEach(el => {
       el.style.color = colors.nodeText;
     });
+    clone.querySelectorAll<HTMLElement>('.connection-text-card').forEach(el => {
+      el.style.background = colors.connectionTextBackground;
+      el.style.color = colors.connectionTextColor;
+    });
   }
 
   /**

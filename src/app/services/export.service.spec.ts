@@ -87,6 +87,14 @@ describe('ExportService', () => {
     });
   });
 
+  describe('jsonPayload', () => {
+    it('returns the pretty-printed live Graph State — the dialog preview and downloads share it', () => {
+      graphService.createNode('Preview', 3, 4);
+
+      expect(service.jsonPayload()).toBe(JSON.stringify(graphService.exportGraph(), null, 2));
+    });
+  });
+
   describe('copyJson', () => {
     it('writes the pretty-printed Graph State JSON to the clipboard and shows a success toast', async () => {
       const node = graphService.createNode('Clipboard Node', 10, 20);
