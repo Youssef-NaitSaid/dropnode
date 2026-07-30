@@ -15,6 +15,9 @@ import {
   lucideLink,
   lucideCloud,
   lucideFolderPlus,
+  lucideMinus,
+  lucideArrowRight,
+  lucidePlay,
 } from '@ng-icons/lucide';
 import { HlmButton } from '@spartan-ng/helm/button';
 import { HlmSeparator } from '@spartan-ng/helm/separator';
@@ -29,8 +32,9 @@ import { HistoryService } from '../../services/history.service';
 import { ExportService } from '../../services/export.service';
 import { CollectionService } from '../../services/collection.service';
 import { ImportDialogService } from '../../services/import-dialog.service';
-import { CreateGroupCommand, SetNodeColorCommand } from '../../services/commands';
+import { CreateGroupCommand, SetNodeColorCommand, SetConnectionColorCommand, SetConnectionArrowheadCommand } from '../../services/commands';
 import { NODE_PALETTE } from '../../models/node';
+import { Connection, ArrowheadType, ArrowheadEnd, effectiveArrowhead } from '../../models/connection';
 
 @Component({
   selector: 'app-toolbar',
@@ -52,6 +56,9 @@ import { NODE_PALETTE } from '../../models/node';
       lucideLink,
       lucideCloud,
       lucideFolderPlus,
+      lucideMinus,
+      lucideArrowRight,
+      lucidePlay,
     }),
   ],
   template: `
@@ -86,6 +93,55 @@ import { NODE_PALETTE } from '../../models/node';
                 [attr.aria-label]="color"
                 (click)="setColor(color)"
               ></button>
+            }
+          </div>
+        }
+        @if (selectedConnection(); as conn) {
+          <hlm-separator orientation="vertical" class="mx-1" />
+          <div class="flex items-center gap-1.5" title="Connection color">
+            <button
+              class="swatch swatch-default"
+              [class.active]="!conn.color"
+              title="Default"
+              aria-label="Default color"
+              (click)="setConnectionColor(null)"
+            ></button>
+            @for (color of palette; track color) {
+              <button
+                class="swatch"
+                [class.active]="conn.color === color"
+                [style.background]="color"
+                [title]="color"
+                [attr.aria-label]="color"
+                (click)="setConnectionColor(color)"
+              ></button>
+            }
+          </div>
+          <hlm-separator orientation="vertical" class="mx-1" />
+          <div class="flex items-center gap-0.5" title="Start arrowhead (source end)" aria-label="Start arrowhead">
+            @for (opt of arrowheadOptions; track opt.type) {
+              <button
+                class="ah-btn"
+                [class.active]="effectiveArrowhead(conn, 'start') === opt.type"
+                [title]="opt.label"
+                [attr.aria-label]="'Start ' + opt.label"
+                (click)="setArrowhead('start', opt.type)"
+              >
+                <ng-icon [name]="opt.icon" class="flip-x" />
+              </button>
+            }
+          </div>
+          <div class="flex items-center gap-0.5" title="End arrowhead (target end)" aria-label="End arrowhead">
+            @for (opt of arrowheadOptions; track opt.type) {
+              <button
+                class="ah-btn"
+                [class.active]="effectiveArrowhead(conn, 'end') === opt.type"
+                [title]="opt.label"
+                [attr.aria-label]="'End ' + opt.label"
+                (click)="setArrowhead('end', opt.type)"
+              >
+                <ng-icon [name]="opt.icon" />
+              </button>
             }
           </div>
         }
@@ -194,6 +250,31 @@ import { NODE_PALETTE } from '../../models/node';
       border-radius: 50%;
       border: 1px dashed var(--muted-foreground);
     }
+    .ah-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 26px;
+      height: 26px;
+      border-radius: 6px;
+      border: 1px solid transparent;
+      background: transparent;
+      color: var(--muted-foreground);
+      cursor: pointer;
+      transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+    }
+    .ah-btn:hover {
+      color: var(--foreground);
+      background: var(--accent);
+    }
+    .ah-btn.active {
+      color: var(--primary);
+      border-color: var(--primary);
+      background: color-mix(in oklch, var(--primary) 15%, transparent);
+    }
+    .flip-x {
+      transform: scaleX(-1);
+    }
   `],
 })
 export class ToolbarComponent {
@@ -209,6 +290,17 @@ export class ToolbarComponent {
 
   palette = NODE_PALETTE;
 
+  // Start icons are the same glyphs flipped horizontally (see .flip-x) so they
+  // point backward along the curve, teaching the source→target direction.
+  arrowheadOptions: { type: ArrowheadType; icon: string; label: string }[] = [
+    { type: 'none', icon: 'lucideMinus', label: 'None' },
+    { type: 'arrow', icon: 'lucideArrowRight', label: 'Arrow' },
+    { type: 'triangle', icon: 'lucidePlay', label: 'Triangle' },
+  ];
+
+  // Re-exposed for the template's active-state checks
+  effectiveArrowhead = effectiveArrowhead;
+
   zoomPercent = () => Math.round(this.graphService.viewportState().zoom * 100);
 
   selectedColor = () => this.graphService.selectedNode()?.color ?? null;
@@ -218,6 +310,27 @@ export class ToolbarComponent {
     if (!selectedId) return;
     if ((this.graphService.selectedNode()?.color ?? null) === color) return;
     this.historyService.execute(new SetNodeColorCommand(this.graphService, selectedId, color));
+  }
+
+  // The Connection currently selected, or null. Styling controls bind to this.
+  selectedConnection = (): Connection | null => {
+    const id = this.graphService.selectedConnectionId();
+    return id ? this.graphService.connections().find(c => c.id === id) ?? null : null;
+  };
+
+  setConnectionColor(color: string | null): void {
+    const conn = this.selectedConnection();
+    if (!conn) return;
+    if ((conn.color ?? null) === color) return;
+    this.historyService.execute(new SetConnectionColorCommand(this.graphService, conn.id, color));
+  }
+
+  setArrowhead(end: ArrowheadEnd, type: ArrowheadType): void {
+    const conn = this.selectedConnection();
+    if (!conn) return;
+    // Clicking the already-effective value is a no-op — no Command, no History
+    if (effectiveArrowhead(conn, end) === type) return;
+    this.historyService.execute(new SetConnectionArrowheadCommand(this.graphService, conn.id, end, type));
   }
 
   addGroup(): void {

@@ -275,6 +275,83 @@ describe('GraphService', () => {
     });
   });
 
+  describe('setConnectionColor', () => {
+    function makeConn(): Connection {
+      const n1 = service.createNode('N1', 0, 0);
+      const n2 = service.createNode('N2', 300, 0);
+      return service.createConnection(n1.id, 'right', n2.id, 'left')!;
+    }
+
+    it('sets a palette color on the connection', () => {
+      const conn = makeConn();
+      service.setConnectionColor(conn.id, NODE_PALETTE[2]);
+      expect(service.connections()[0].color).toBe(NODE_PALETTE[2]);
+    });
+
+    it('removes the color field when set to null', () => {
+      const conn = makeConn();
+      service.setConnectionColor(conn.id, NODE_PALETTE[2]);
+      service.setConnectionColor(conn.id, null);
+      expect('color' in service.connections()[0]).toBe(false);
+    });
+
+    it('createConnection never sets a color', () => {
+      const conn = makeConn();
+      expect('color' in conn).toBe(false);
+    });
+
+    it('is a silent no-op for an unknown connection id', () => {
+      makeConn();
+      expect(() => service.setConnectionColor('nope', NODE_PALETTE[0])).not.toThrow();
+    });
+  });
+
+  describe('setConnectionArrowhead', () => {
+    function makeConn(): Connection {
+      const n1 = service.createNode('N1', 0, 0);
+      const n2 = service.createNode('N2', 300, 0);
+      return service.createConnection(n1.id, 'right', n2.id, 'left')!;
+    }
+
+    it('stores a non-default start Arrowhead', () => {
+      const conn = makeConn();
+      service.setConnectionArrowhead(conn.id, 'start', 'triangle');
+      expect(service.connections()[0].startArrowhead).toBe('triangle');
+    });
+
+    it('stores a non-default end Arrowhead', () => {
+      const conn = makeConn();
+      service.setConnectionArrowhead(conn.id, 'end', 'triangle');
+      expect(service.connections()[0].endArrowhead).toBe('triangle');
+    });
+
+    it('removes the start field when set back to its default (none)', () => {
+      const conn = makeConn();
+      service.setConnectionArrowhead(conn.id, 'start', 'arrow');
+      service.setConnectionArrowhead(conn.id, 'start', 'none');
+      expect('startArrowhead' in service.connections()[0]).toBe(false);
+    });
+
+    it('removes the end field when set back to its default (arrow)', () => {
+      const conn = makeConn();
+      service.setConnectionArrowhead(conn.id, 'end', 'triangle');
+      service.setConnectionArrowhead(conn.id, 'end', 'arrow');
+      expect('endArrowhead' in service.connections()[0]).toBe(false);
+    });
+
+    it('stores an explicit none on the end (deviates from the arrow default)', () => {
+      const conn = makeConn();
+      service.setConnectionArrowhead(conn.id, 'end', 'none');
+      expect(service.connections()[0].endArrowhead).toBe('none');
+    });
+
+    it('createConnection sets neither Arrowhead field', () => {
+      const conn = makeConn();
+      expect('startArrowhead' in conn).toBe(false);
+      expect('endArrowhead' in conn).toBe(false);
+    });
+  });
+
   describe('selectNode / clearSelection', () => {
     it('sets selectedNodeId', () => {
       const node = service.createNode('Test', 0, 0);
@@ -608,6 +685,110 @@ describe('GraphService', () => {
       expect(result.success).toBe(true);
       expect(service.nodes().length).toBe(0);
       expect(service.connections().length).toBe(0);
+    });
+
+    it('off-palette connection color rejected wholesale', () => {
+      const result = service.importGraph({
+        nodes: [
+          { id: 'n1', label: 'Node 1', x: 0, y: 0, width: 160, height: 48 },
+          { id: 'n2', label: 'Node 2', x: 200, y: 0, width: 160, height: 48 },
+        ],
+        connections: [
+          { id: 'c1', sourceNodeId: 'n1', sourceHandle: 'right', targetNodeId: 'n2', targetHandle: 'left', color: '#123456' },
+        ],
+      } as any);
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('Invalid connection c1: color must be a palette color');
+    });
+
+    it('a palette connection color imports', () => {
+      const result = service.importGraph({
+        nodes: [
+          { id: 'n1', label: 'Node 1', x: 0, y: 0, width: 160, height: 48 },
+          { id: 'n2', label: 'Node 2', x: 200, y: 0, width: 160, height: 48 },
+        ],
+        connections: [
+          { id: 'c1', sourceNodeId: 'n1', sourceHandle: 'right', targetNodeId: 'n2', targetHandle: 'left', color: NODE_PALETTE[0] },
+        ],
+      } as any);
+      expect(result.success).toBe(true);
+      expect(service.connections()[0].color).toBe(NODE_PALETTE[0]);
+    });
+
+    it('out-of-range startArrowhead rejected wholesale', () => {
+      const result = service.importGraph({
+        nodes: [
+          { id: 'n1', label: 'Node 1', x: 0, y: 0, width: 160, height: 48 },
+          { id: 'n2', label: 'Node 2', x: 200, y: 0, width: 160, height: 48 },
+        ],
+        connections: [
+          { id: 'c1', sourceNodeId: 'n1', sourceHandle: 'right', targetNodeId: 'n2', targetHandle: 'left', startArrowhead: 'diamond' },
+        ],
+      } as any);
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('Invalid connection c1: startArrowhead must be none, arrow, or triangle');
+    });
+
+    it('out-of-range endArrowhead rejected wholesale', () => {
+      const result = service.importGraph({
+        nodes: [
+          { id: 'n1', label: 'Node 1', x: 0, y: 0, width: 160, height: 48 },
+          { id: 'n2', label: 'Node 2', x: 200, y: 0, width: 160, height: 48 },
+        ],
+        connections: [
+          { id: 'c1', sourceNodeId: 'n1', sourceHandle: 'right', targetNodeId: 'n2', targetHandle: 'left', endArrowhead: 'circle' },
+        ],
+      } as any);
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('Invalid connection c1: endArrowhead must be none, arrow, or triangle');
+    });
+
+    it('valid Arrowhead values import', () => {
+      const result = service.importGraph({
+        nodes: [
+          { id: 'n1', label: 'Node 1', x: 0, y: 0, width: 160, height: 48 },
+          { id: 'n2', label: 'Node 2', x: 200, y: 0, width: 160, height: 48 },
+        ],
+        connections: [
+          { id: 'c1', sourceNodeId: 'n1', sourceHandle: 'right', targetNodeId: 'n2', targetHandle: 'left', startArrowhead: 'triangle', endArrowhead: 'none' },
+        ],
+      } as any);
+      expect(result.success).toBe(true);
+      expect(service.connections()[0].startArrowhead).toBe('triangle');
+      expect(service.connections()[0].endArrowhead).toBe('none');
+    });
+
+    it('normalizes explicitly-default Arrowhead values to absent on import (ADR-0012 canonical form)', () => {
+      const result = service.importGraph({
+        nodes: [
+          { id: 'n1', label: 'Node 1', x: 0, y: 0, width: 160, height: 48 },
+          { id: 'n2', label: 'Node 2', x: 200, y: 0, width: 160, height: 48 },
+        ],
+        connections: [
+          { id: 'c1', sourceNodeId: 'n1', sourceHandle: 'right', targetNodeId: 'n2', targetHandle: 'left', startArrowhead: 'none', endArrowhead: 'arrow' },
+        ],
+      } as any);
+      expect(result.success).toBe(true);
+      const c = service.connections()[0];
+      expect('startArrowhead' in c).toBe(false);
+      expect('endArrowhead' in c).toBe(false);
+    });
+
+    it('connections omitting the new fields import unchanged', () => {
+      const result = service.importGraph({
+        nodes: [
+          { id: 'n1', label: 'Node 1', x: 0, y: 0, width: 160, height: 48 },
+          { id: 'n2', label: 'Node 2', x: 200, y: 0, width: 160, height: 48 },
+        ],
+        connections: [
+          { id: 'c1', sourceNodeId: 'n1', sourceHandle: 'right', targetNodeId: 'n2', targetHandle: 'left' },
+        ],
+      } as any);
+      expect(result.success).toBe(true);
+      const c = service.connections()[0];
+      expect('color' in c).toBe(false);
+      expect('startArrowhead' in c).toBe(false);
+      expect('endArrowhead' in c).toBe(false);
     });
   });
 
