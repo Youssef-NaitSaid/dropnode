@@ -4,11 +4,15 @@ import {
 } from '@angular/core';
 import { CdkContextMenuTrigger } from '@angular/cdk/menu';
 import { NgIcon, provideIcons } from '@ng-icons/core';
-import { lucideSquarePlus, lucideGroup, lucidePencil, lucideTag, lucideTrash2 } from '@ng-icons/lucide';
+import {
+  lucideSquarePlus, lucideGroup, lucidePencil, lucideTag, lucideTrash2,
+  lucideScissors, lucideCopy, lucideClipboardPaste, lucideCopyPlus,
+} from '@ng-icons/lucide';
 import { HlmDropdownMenu, HlmDropdownMenuItem } from '@spartan-ng/helm/dropdown-menu';
 import { GraphService } from '../../services/graph.service';
 import { HistoryService } from '../../services/history.service';
 import { ContextMenuService } from '../../services/context-menu.service';
+import { ClipboardService } from '../../services/clipboard.service';
 import {
   CreateNodeCommand,
   MoveNodeCommand,
@@ -37,7 +41,10 @@ import { Text } from '../../models/text';
     CdkContextMenuTrigger, HlmDropdownMenu, HlmDropdownMenuItem,
   ],
   providers: [
-    provideIcons({ lucideSquarePlus, lucideGroup, lucidePencil, lucideTag, lucideTrash2 }),
+    provideIcons({
+      lucideSquarePlus, lucideGroup, lucidePencil, lucideTag, lucideTrash2,
+      lucideScissors, lucideCopy, lucideClipboardPaste, lucideCopyPlus,
+    }),
   ],
   template: `
     <div class="canvas-viewport" [cdkContextMenuTriggerFor]="contextMenu">
@@ -110,6 +117,10 @@ import { Text } from '../../models/text';
               <ng-icon name="lucideGroup" />
               <span>Add group</span>
             </button>
+            <button hlmDropdownMenuItem [disabled]="!contextMenuService.canPaste()" (triggered)="contextMenuService.pasteHere()">
+              <ng-icon name="lucideClipboardPaste" />
+              <span>Paste</span>
+            </button>
           }
           @case ('node') {
             @if (contextMenuService.targetIsGroup()) {
@@ -127,6 +138,24 @@ import { Text } from '../../models/text';
                 <span>Edit text</span>
               </button>
             }
+            <button hlmDropdownMenuItem (triggered)="contextMenuService.cutTarget()">
+              <ng-icon name="lucideScissors" />
+              <span>Cut</span>
+            </button>
+            <button hlmDropdownMenuItem (triggered)="contextMenuService.copyTarget()">
+              <ng-icon name="lucideCopy" />
+              <span>Copy</span>
+            </button>
+            @if (contextMenuService.targetIsGroup()) {
+              <button hlmDropdownMenuItem [disabled]="!contextMenuService.canPaste()" (triggered)="contextMenuService.pasteHere()">
+                <ng-icon name="lucideClipboardPaste" />
+                <span>Paste</span>
+              </button>
+            }
+            <button hlmDropdownMenuItem (triggered)="contextMenuService.duplicateTarget()">
+              <ng-icon name="lucideCopyPlus" />
+              <span>Duplicate</span>
+            </button>
             <button hlmDropdownMenuItem variant="destructive" (triggered)="contextMenuService.deleteTarget()">
               <ng-icon name="lucideTrash2" />
               <span>Delete</span>
@@ -189,6 +218,15 @@ export class CanvasComponent {
   graphService = inject(GraphService);
   contextMenuService = inject(ContextMenuService);
   private historyService = inject(HistoryService);
+  private clipboardService = inject(ClipboardService);
+
+  constructor() {
+    // Ctrl+V converts the raw cursor point to canvas coordinates lazily at
+    // paste time — mousemove itself stays reflow-free (ADR-0003 hot path)
+    this.clipboardService.registerCursorResolver(
+      point => this.clientPointToCanvas(point.x, point.y),
+    );
+  }
 
   private connectionLayer = viewChild<ConnectionLayerComponent>('connectionLayer');
 
@@ -205,6 +243,8 @@ export class CanvasComponent {
   private dragNodeStartY = 0;
   private hasMoved = false;
   private dragIsGroup = false;
+  // True while dragging an Alt+drag-spawned duplicate instead of the original
+  private dragIsSpawnedDuplicate = false;
 
   // Resize drag state
   private isResizingNode = false;
@@ -320,18 +360,30 @@ export class CanvasComponent {
 
   // Node drag handling
   onNodeStartMove(event: { nodeId: string; event: MouseEvent }): void {
+    // Alt at drag start spawns a Duplicate: the drag moves the copy and the
+    // original never moves. Mid-drag Alt changes are deliberately ignored.
+    let nodeId = event.nodeId;
+    this.dragIsSpawnedDuplicate = false;
+    if (event.event.altKey) {
+      const spawn = this.clipboardService.spawnDuplicate(event.nodeId);
+      if (spawn) {
+        nodeId = spawn.primaryId;
+        this.dragIsSpawnedDuplicate = true;
+      }
+    }
+
     this.isDraggingNode = true;
-    this.dragNodeId = event.nodeId;
+    this.dragNodeId = nodeId;
     this.dragStartX = event.event.clientX;
     this.dragStartY = event.event.clientY;
-    const node = this.graphService.nodes().find(n => n.id === event.nodeId);
+    const node = this.graphService.nodes().find(n => n.id === nodeId);
     if (node) {
       this.dragNodeStartX = node.x;
       this.dragNodeStartY = node.y;
       this.dragIsGroup = node.kind === 'group';
     }
     this.hasMoved = false;
-    this.graphService.selectNode(event.nodeId);
+    this.graphService.selectNode(nodeId);
   }
 
   // Resize grip drag start
@@ -366,6 +418,10 @@ export class CanvasComponent {
 
   @HostListener('document:mousemove', ['$event'])
   onMouseMove(event: MouseEvent): void {
+    // Raw client coordinates only — the canvas-coordinate conversion happens
+    // lazily when Ctrl+V actually pastes, keeping this hot path cheap
+    this.clipboardService.setCursorPosition(event.clientX, event.clientY);
+
     if (this.isDraggingNode && this.dragNodeId) {
       const vp = this.graphService.viewportState();
       const dx = (event.clientX - this.dragStartX) / vp.zoom;
@@ -425,8 +481,26 @@ export class CanvasComponent {
 
   @HostListener('document:mouseup', ['$event'])
   onMouseUp(_event: MouseEvent): void {
-    // Finish node drag — record undo command
-    if (this.isDraggingNode && this.dragNodeId && this.hasMoved) {
+    // Finish an Alt+drag duplicate — the whole gesture is one undo step.
+    // Without movement the spawn is aborted (mirroring the 2px move rule).
+    if (this.isDraggingNode && this.dragNodeId && this.dragIsSpawnedDuplicate) {
+      if (!this.hasMoved) {
+        this.clipboardService.cancelSpawnedDuplicate();
+      } else {
+        const node = this.graphService.nodes().find(n => n.id === this.dragNodeId);
+        if (node && !this.dragIsGroup) {
+          // Membership by drop position, same containment rule as a move;
+          // transient here — the commit snapshots it into the undo step
+          const targetGroup = this.graphService.findGroupAt(
+            node.x + node.width / 2,
+            node.y + node.height / 2,
+            node.id,
+          );
+          this.graphService.setNodeParent(node.id, targetGroup?.id ?? null);
+        }
+        this.clipboardService.commitSpawnedDuplicate();
+      }
+    } else if (this.isDraggingNode && this.dragNodeId && this.hasMoved) {
       const node = this.graphService.nodes().find(n => n.id === this.dragNodeId);
       if (node && this.dragIsGroup) {
         // A Group drag moved its children rigidly; one undo step for all of it
@@ -486,6 +560,7 @@ export class CanvasComponent {
     this.dragNodeId = null;
     this.hasMoved = false;
     this.dragIsGroup = false;
+    this.dragIsSpawnedDuplicate = false;
 
     // Finish resize drag — one undo step, only if the final rect actually changed
     if (this.isResizingNode && this.resizeNodeId) {

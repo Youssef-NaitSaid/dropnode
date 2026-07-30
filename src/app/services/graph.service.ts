@@ -30,6 +30,16 @@ export class GraphService {
     return `${prefix}_${Date.now()}_${++this.idCounter}`;
   }
 
+  // Public id minting for Paste/Duplicate: copies must carry fresh ids in the
+  // same node_/conn_ pattern, from the same monotonic session counter
+  generateNodeId(): string {
+    return this.generateId('node');
+  }
+
+  generateConnectionId(): string {
+    return this.generateId('conn');
+  }
+
   // Node operations
   createNode(text: string, x: number, y: number, width = 160, height = 48): GraphNode {
     const node: GraphNode = {

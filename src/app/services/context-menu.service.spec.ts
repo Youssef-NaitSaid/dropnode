@@ -1,17 +1,20 @@
 import { TestBed } from '@angular/core/testing';
 import { ContextMenuService } from './context-menu.service';
+import { ClipboardService } from './clipboard.service';
 import { GraphService } from './graph.service';
 import { HistoryService } from './history.service';
 import { textFromString } from '../models/text';
 
 describe('ContextMenuService', () => {
   let service: ContextMenuService;
+  let clipboardService: ClipboardService;
   let graphService: GraphService;
   let historyService: HistoryService;
 
   beforeEach(() => {
     TestBed.configureTestingModule({});
     service = TestBed.inject(ContextMenuService);
+    clipboardService = TestBed.inject(ClipboardService);
     graphService = TestBed.inject(GraphService);
     historyService = TestBed.inject(HistoryService);
   });
@@ -254,6 +257,104 @@ describe('ContextMenuService', () => {
       service.clearConnectionTextRequest();
 
       expect(service.connectionTextRequest()).toBeNull();
+    });
+  });
+
+  describe('clipboard actions', () => {
+    it('copyTarget fills the Clipboard and exposes canPaste for the menu', () => {
+      const node = graphService.createNode('A', 0, 0);
+      service.openFor({ kind: 'node', nodeId: node.id }, 10, 10);
+
+      expect(service.canPaste()).toBe(false);
+      service.copyTarget();
+
+      expect(service.canPaste()).toBe(true);
+      expect(graphService.nodes().length).toBe(1);
+      expect(historyService.canUndo()).toBe(false);
+    });
+
+    it('cutTarget removes the target as one undo step', () => {
+      const node = graphService.createNode('A', 0, 0);
+      service.openFor({ kind: 'node', nodeId: node.id }, 10, 10);
+
+      service.cutTarget();
+
+      expect(graphService.nodes().length).toBe(0);
+      expect(service.canPaste()).toBe(true);
+      historyService.undo();
+      expect(graphService.nodes().length).toBe(1);
+    });
+
+    it('copy/cut/duplicate are silent no-ops for connection and canvas targets', () => {
+      const a = graphService.createNode('A', 0, 0);
+      const b = graphService.createNode('B', 300, 0);
+      const conn = graphService.createConnection(a.id, 'right', b.id, 'left')!;
+
+      service.openFor({ kind: 'connection', connectionId: conn.id }, 10, 10);
+      service.copyTarget();
+      service.cutTarget();
+      service.duplicateTarget();
+      service.openFor({ kind: 'canvas' }, 10, 10);
+      service.copyTarget();
+      service.cutTarget();
+      service.duplicateTarget();
+
+      expect(service.canPaste()).toBe(false);
+      expect(graphService.nodes().length).toBe(2);
+      expect(graphService.connections().length).toBe(1);
+      expect(historyService.canUndo()).toBe(false);
+    });
+
+    it('pasteHere centers the copy on the right-click point', () => {
+      const node = graphService.createNode('A', 0, 0);
+      service.openFor({ kind: 'node', nodeId: node.id }, 0, 0);
+      service.copyTarget();
+
+      service.openFor({ kind: 'canvas' }, 400, 300);
+      service.pasteHere();
+
+      const pasted = graphService.nodes().find(n => n.id !== node.id)!;
+      // 160x48 centered on the point
+      expect(pasted.x).toBe(320);
+      expect(pasted.y).toBe(276);
+      expect(pasted.parentId).toBeUndefined();
+    });
+
+    it('pasteHere on a Group parents the pasted node into that Group', () => {
+      const node = graphService.createNode('A', 900, 900);
+      const group = graphService.createGroup('G', 0, 0, 400, 300);
+      service.openFor({ kind: 'node', nodeId: node.id }, 0, 0);
+      service.copyTarget();
+
+      service.openFor({ kind: 'node', nodeId: group.id }, 100, 100);
+      service.pasteHere();
+
+      const pasted = graphService.nodes().find(n => n.id !== node.id && n.id !== group.id)!;
+      expect(pasted.parentId).toBe(group.id);
+    });
+
+    it('pasteHere with an empty Clipboard is a silent no-op', () => {
+      service.openFor({ kind: 'canvas' }, 100, 100);
+      service.pasteHere();
+
+      expect(graphService.nodes().length).toBe(0);
+      expect(historyService.canUndo()).toBe(false);
+    });
+
+    it('duplicateTarget staggers the copy +24,+24 without touching the Clipboard', () => {
+      const a = graphService.createNode('A', 0, 0);
+      const b = graphService.createNode('B', 500, 500);
+      service.openFor({ kind: 'node', nodeId: a.id }, 0, 0);
+      service.copyTarget();
+
+      service.openFor({ kind: 'node', nodeId: b.id }, 500, 500);
+      service.duplicateTarget();
+
+      const copy = graphService.nodes().find(n => n.x === 524)!;
+      expect(copy.y).toBe(524);
+      expect(graphService.selectedNodeId()).toBe(copy.id);
+      // Clipboard still holds A
+      expect(clipboardService.canPaste()).toBe(true);
     });
   });
 });

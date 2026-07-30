@@ -380,3 +380,46 @@ export class CompoundCommand implements Command {
     }
   }
 }
+
+// Inserts a prepared set of elements (ids already generated) as one undo
+// step — the single Command behind Paste, Duplicate, and Alt+drag duplicate.
+// undo removes exactly the set without a prior execute, so Alt+drag can
+// create transiently during the gesture and push-without-execute on drop.
+export class InsertElementsCommand implements Command {
+  private nodes: GraphNode[];
+  private connections: Connection[];
+
+  constructor(
+    private graphService: GraphService,
+    public description: string,
+    nodes: GraphNode[],
+    connections: Connection[],
+    private primaryNodeId: string,
+  ) {
+    // Deep copy so later graph mutations can't alias into the redo snapshot
+    this.nodes = structuredClone(nodes);
+    this.connections = structuredClone(connections);
+  }
+
+  execute(): void {
+    this.graphService.nodes.update(nodes => [...nodes, ...structuredClone(this.nodes)]);
+    if (this.connections.length > 0) {
+      this.graphService.connections.update(conns => [...conns, ...structuredClone(this.connections)]);
+    }
+    this.graphService.selectNode(this.primaryNodeId);
+  }
+
+  undo(): void {
+    const nodeIds = new Set(this.nodes.map(n => n.id));
+    const connIds = new Set(this.connections.map(c => c.id));
+    this.graphService.nodes.update(nodes => nodes.filter(n => !nodeIds.has(n.id)));
+    this.graphService.connections.update(conns => conns.filter(c => !connIds.has(c.id)));
+    if (nodeIds.has(this.graphService.selectedNodeId() ?? '')) {
+      this.graphService.selectNode(null);
+    }
+    const selectedConn = this.graphService.selectedConnectionId();
+    if (selectedConn && connIds.has(selectedConn)) {
+      this.graphService.selectedConnectionId.set(null);
+    }
+  }
+}

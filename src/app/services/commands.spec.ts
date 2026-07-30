@@ -17,6 +17,7 @@ import {
   CompoundCommand,
   SetNodeTextCommand,
   SetConnectionTextCommand,
+  InsertElementsCommand,
 } from './commands';
 
 describe('Commands', () => {
@@ -588,6 +589,82 @@ describe('Commands', () => {
       cmd.undo();
       expect(graphService.nodes().find(n => n.id === group.id)).toBeDefined();
       expect(graphService.nodes().find(n => n.id === child.id)?.parentId).toBe(group.id);
+    });
+  });
+
+  // Serves Paste, Duplicate, and Alt+drag: inserts a prepared set of elements
+  // (ids already generated) and undo removes exactly that set.
+  describe('InsertElementsCommand', () => {
+    it('execute inserts the prepared nodes and connections and selects the primary node', () => {
+      const existing = graphService.createNode('Existing', 0, 0);
+      const nodes = [
+        { id: 'node_x_101', text: textFromString('A'), x: 10, y: 20, width: 160, height: 48 },
+        { id: 'node_x_102', text: textFromString('B'), x: 300, y: 20, width: 160, height: 48 },
+      ];
+      const connections = [{
+        id: 'conn_x_103',
+        sourceNodeId: 'node_x_101', sourceHandle: 'right' as const,
+        targetNodeId: 'node_x_102', targetHandle: 'left' as const,
+      }];
+
+      const cmd = new InsertElementsCommand(graphService, 'Paste', nodes, connections, 'node_x_101');
+      cmd.execute();
+
+      expect(graphService.nodes().map(n => n.id)).toEqual([existing.id, 'node_x_101', 'node_x_102']);
+      expect(graphService.connections().map(c => c.id)).toEqual(['conn_x_103']);
+      expect(graphService.selectedNodeId()).toBe('node_x_101');
+    });
+
+    it('undo removes exactly the inserted set and clears its selection', () => {
+      const existing = graphService.createNode('Existing', 0, 0);
+      const nodes = [{ id: 'node_x_201', text: textFromString('A'), x: 0, y: 0, width: 160, height: 48 }];
+
+      const cmd = new InsertElementsCommand(graphService, 'Paste', nodes, [], 'node_x_201');
+      cmd.execute();
+      cmd.undo();
+
+      expect(graphService.nodes().map(n => n.id)).toEqual([existing.id]);
+      expect(graphService.selectedNodeId()).toBeNull();
+    });
+
+    it('redo re-inserts the identical elements with the same ids', () => {
+      const nodes = [{ id: 'node_x_301', text: textFromString('A'), x: 5, y: 6, width: 160, height: 48 }];
+      const cmd = new InsertElementsCommand(graphService, 'Duplicate', nodes, [], 'node_x_301');
+
+      cmd.execute();
+      cmd.undo();
+      cmd.execute();
+
+      expect(graphService.nodes().map(n => n.id)).toEqual(['node_x_301']);
+      expect(graphService.nodes()[0]).toMatchObject({ x: 5, y: 6 });
+    });
+
+    it('undo works without a prior execute (push-without-execute pattern for Alt+drag)', () => {
+      // The elements were created transiently during the drag, outside the command
+      const spawned = graphService.createNode('Copy', 40, 40);
+      const cmd = new InsertElementsCommand(
+        graphService, 'Duplicate',
+        [graphService.nodes().find(n => n.id === spawned.id)!], [], spawned.id,
+      );
+
+      cmd.undo();
+
+      expect(graphService.nodes().length).toBe(0);
+    });
+
+    it('leaves unrelated selection untouched on undo', () => {
+      const other = graphService.createNode('Other', 0, 0);
+      const cmd = new InsertElementsCommand(
+        graphService, 'Paste',
+        [{ id: 'node_x_401', text: textFromString('A'), x: 0, y: 0, width: 160, height: 48 }],
+        [], 'node_x_401',
+      );
+      cmd.execute();
+      graphService.selectNode(other.id);
+
+      cmd.undo();
+
+      expect(graphService.selectedNodeId()).toBe(other.id);
     });
   });
 });
