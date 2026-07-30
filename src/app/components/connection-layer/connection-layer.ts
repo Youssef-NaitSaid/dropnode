@@ -1,6 +1,7 @@
 import { Component, computed, effect, input, output, signal, ChangeDetectionStrategy, inject } from '@angular/core';
 import { GraphNode, HandleSide, NODE_PALETTE } from '../../models/node';
-import { Connection, ArrowheadType, effectiveArrowhead } from '../../models/connection';
+import { Connection, ArrowheadType, effectiveArrowhead, effectiveTextPosition } from '../../models/connection';
+import { Curve, connectionCurve, pointAt, textPositionFromPoint } from '../../models/curve';
 import { Text, isTextEmpty } from '../../models/text';
 import { GraphService } from '../../services/graph.service';
 import { ContextMenuService } from '../../services/context-menu.service';
@@ -70,8 +71,8 @@ interface DragState {
         @if (editingConnectionId() === conn.id) {
           <div
             class="connection-text-card editing"
-            [style.left.px]="getLabelMidpoint(conn).x"
-            [style.top.px]="getLabelMidpoint(conn).y"
+            [style.left.px]="getTextCardPosition(conn).x"
+            [style.top.px]="getTextCardPosition(conn).y"
             (mousedown)="$event.stopPropagation()"
             (dblclick)="$event.stopPropagation()"
             (contextmenu)="$event.stopPropagation()"
@@ -87,9 +88,9 @@ interface DragState {
             class="connection-text-card"
             [attr.data-connection-id]="conn.id"
             [class.selected]="isSelected(conn.id)"
-            [style.left.px]="getLabelMidpoint(conn).x"
-            [style.top.px]="getLabelMidpoint(conn).y"
-            (mousedown)="onConnectionMouseDown(conn, $event)"
+            [style.left.px]="getTextCardPosition(conn).x"
+            [style.top.px]="getTextCardPosition(conn).y"
+            (mousedown)="onTextCardMouseDown(conn, $event)"
             (dblclick)="onConnectionDoubleClick(conn, $event)"
           >
             <app-text-view [text]="conn.text" />
@@ -240,6 +241,9 @@ export class ConnectionLayerComponent {
   }
 
   connectionSelect = output<string>();
+  // Mousedown on a Text card: the Canvas owns the gesture (click-select vs
+  // 2px-threshold drag along the curve), mirroring the node-drag split
+  textDragStart = output<{ connectionId: string; event: MouseEvent }>();
   // null means the Text was cleared (committing empty removes it)
   textCommit = output<{ connectionId: string; newText: Text | null }>();
 
@@ -254,32 +258,27 @@ export class ConnectionLayerComponent {
   }
 
   getConnectionPath(conn: Connection): string {
-    const { start, end, cp1, cp2 } = this.getConnectionGeometry(conn);
-    return this.formatBezier(start, cp1, cp2, end);
+    return this.formatBezier(this.getCurve(conn));
   }
 
-  // Cubic bezier midpoint (t = 0.5): (start + 3·cp1 + 3·cp2 + end) / 8
-  getLabelMidpoint(conn: Connection): { x: number; y: number } {
-    const { start, end, cp1, cp2 } = this.getConnectionGeometry(conn);
-    return {
-      x: (start.x + 3 * cp1.x + 3 * cp2.x + end.x) / 8,
-      y: (start.y + 3 * cp1.y + 3 * cp2.y + end.y) / 8,
-    };
+  // The Text card centers on the bezier point at the Connection's stored
+  // position (absent means the midpoint, ADR-0013)
+  getTextCardPosition(conn: Connection): { x: number; y: number } {
+    return pointAt(this.getCurve(conn), effectiveTextPosition(conn));
   }
 
-  private getConnectionGeometry(conn: Connection): {
-    start: { x: number; y: number };
-    end: { x: number; y: number };
-    cp1: { x: number; y: number };
-    cp2: { x: number; y: number };
-  } {
+  // Cursor→position projection for the Text card drag, delegated to the pure
+  // curve module (nearest-t, clamped, midpoint-snapped)
+  textPositionAtPoint(connectionId: string, canvasX: number, canvasY: number): number | null {
+    const conn = this.connections().find(c => c.id === connectionId);
+    if (!conn) return null;
+    return textPositionFromPoint(this.getCurve(conn), { x: canvasX, y: canvasY });
+  }
+
+  private getCurve(conn: Connection): Curve {
     const start = this.getHandlePos(conn.sourceNodeId, conn.sourceHandle);
     const end = this.getHandlePos(conn.targetNodeId, conn.targetHandle);
-    const distance = Math.sqrt((end.x - start.x) ** 2 + (end.y - start.y) ** 2);
-    const offset = Math.min(Math.max(distance * 0.4, 40), 150);
-    const cp1 = this.getControlPoint(start, conn.sourceHandle, offset);
-    const cp2 = this.getControlPoint(end, conn.targetHandle, offset);
-    return { start, end, cp1, cp2 };
+    return connectionCurve(start, end, conn.sourceHandle, conn.targetHandle);
   }
 
   isSelected(connectionId: string): boolean {
@@ -292,38 +291,12 @@ export class ConnectionLayerComponent {
     const start = this.getHandlePos(state.sourceNodeId, state.sourceHandle);
     const end = { x: state.currentX, y: state.currentY };
     const endHandle = state.targetHandle ?? this.getOppositeHandle(state.sourceHandle);
-    return this.buildBezierPath(start, end, state.sourceHandle, endHandle);
+    return this.formatBezier(connectionCurve(start, end, state.sourceHandle, endHandle));
   }
 
-  private buildBezierPath(
-    start: { x: number; y: number },
-    end: { x: number; y: number },
-    startHandle: HandleSide,
-    endHandle: HandleSide,
-  ): string {
-    const distance = Math.sqrt((end.x - start.x) ** 2 + (end.y - start.y) ** 2);
-    const offset = Math.min(Math.max(distance * 0.4, 40), 150);
-    const cp1 = this.getControlPoint(start, startHandle, offset);
-    const cp2 = this.getControlPoint(end, endHandle, offset);
-    return this.formatBezier(start, cp1, cp2, end);
-  }
-
-  private formatBezier(
-    start: { x: number; y: number },
-    cp1: { x: number; y: number },
-    cp2: { x: number; y: number },
-    end: { x: number; y: number },
-  ): string {
+  private formatBezier(curve: Curve): string {
+    const { start, cp1, cp2, end } = curve;
     return `M ${start.x} ${start.y} C ${cp1.x} ${cp1.y}, ${cp2.x} ${cp2.y}, ${end.x} ${end.y}`;
-  }
-
-  private getControlPoint(pos: { x: number; y: number }, handle: HandleSide, offset: number): { x: number; y: number } {
-    switch (handle) {
-      case 'top': return { x: pos.x, y: pos.y - offset };
-      case 'right': return { x: pos.x + offset, y: pos.y };
-      case 'bottom': return { x: pos.x, y: pos.y + offset };
-      case 'left': return { x: pos.x - offset, y: pos.y };
-    }
   }
 
   private getOppositeHandle(handle: HandleSide): HandleSide {
@@ -394,6 +367,16 @@ export class ConnectionLayerComponent {
   onConnectionMouseDown(conn: Connection, event: MouseEvent): void {
     event.stopPropagation();
     this.connectionSelect.emit(conn.id);
+  }
+
+  // A Text card mousedown selects (as any Connection click) and arms a
+  // potential drag; whether it becomes one is the Canvas's threshold call
+  onTextCardMouseDown(conn: Connection, event: MouseEvent): void {
+    event.stopPropagation();
+    this.connectionSelect.emit(conn.id);
+    if (event.button === 0) {
+      this.textDragStart.emit({ connectionId: conn.id, event });
+    }
   }
 
   onConnectionDoubleClick(conn: Connection, event: MouseEvent): void {

@@ -1,6 +1,6 @@
 import { Injectable, signal, computed } from '@angular/core';
 import { GraphNode, HandleSide, NODE_PALETTE } from '../models/node';
-import { Connection, ArrowheadType, ArrowheadEnd, ARROWHEAD_TYPES, defaultArrowhead } from '../models/connection';
+import { Connection, ArrowheadType, ArrowheadEnd, ARROWHEAD_TYPES, defaultArrowhead, TEXT_POSITION_MIN, TEXT_POSITION_MAX, TEXT_POSITION_DEFAULT } from '../models/connection';
 import { GraphState } from '../models/graph-state';
 import { ViewportState } from '../models/viewport-state';
 import { Text, textFromString, isTextEmpty, validateText, canonicalizeText } from '../models/text';
@@ -272,17 +272,38 @@ export class GraphService {
     return conn;
   }
 
-  // Connection Text: committing null or an empty Text removes the field entirely
+  // Connection Text: committing null or an empty Text removes the field entirely.
+  // The textPosition lives and dies with the Text (ADR-0013), so clearing
+  // drops it too.
   setConnectionText(id: string, text: Text | null): void {
     const cleared = text === null || isTextEmpty(text);
     this.connections.update(conns =>
       conns.map(c => {
         if (c.id !== id) return c;
         if (cleared) {
-          const { text: _removed, ...rest } = c;
+          const { text: _removed, textPosition: _removedPos, ...rest } = c;
           return rest;
         }
         return { ...c, text: text! };
+      })
+    );
+  }
+
+  // Text position along the curve (ADR-0013): clamped to [0.1, 0.9]; the
+  // midpoint or null removes the field (absent means midpoint). A position
+  // may only exist alongside Text — Text-less Connections are a silent no-op.
+  setConnectionTextPosition(id: string, position: number | null): void {
+    this.connections.update(conns =>
+      conns.map(c => {
+        if (c.id !== id || !c.text) return c;
+        const clamped = position === null
+          ? null
+          : Math.min(Math.max(position, TEXT_POSITION_MIN), TEXT_POSITION_MAX);
+        if (clamped === null || clamped === TEXT_POSITION_DEFAULT) {
+          const { textPosition: _removed, ...rest } = c;
+          return rest;
+        }
+        return { ...c, textPosition: clamped };
       })
     );
   }
@@ -402,6 +423,8 @@ export class GraphService {
     // deviations persist (ADR-0012), matching the "absent means default" rule.
     if (rest.startArrowhead === defaultArrowhead('start')) delete rest.startArrowhead;
     if (rest.endArrowhead === defaultArrowhead('end')) delete rest.endArrowhead;
+    // Same canonical form for textPosition: an explicit midpoint is absent
+    if (rest.textPosition === TEXT_POSITION_DEFAULT) delete rest.textPosition;
     if (conn.text) return { ...rest, text: canonicalizeText(conn.text) };
     if (label !== undefined && label.trim() !== '') {
       return { ...rest, text: textFromString(label) };
@@ -549,6 +572,17 @@ export class GraphService {
       }
       if (conn['endArrowhead'] !== undefined && !ARROWHEAD_TYPES.includes(conn['endArrowhead'] as ArrowheadType)) {
         return { valid: false, error: `Invalid connection ${connId}: endArrowhead must be none, arrow, or triangle` };
+      }
+      // textPosition is geometry-determining like a handle side: one legal
+      // shape, rejected wholesale otherwise (ADR-0013) — never repaired.
+      if (conn['textPosition'] !== undefined) {
+        const pos = conn['textPosition'];
+        if (typeof pos !== 'number' || Number.isNaN(pos) || pos < TEXT_POSITION_MIN || pos > TEXT_POSITION_MAX) {
+          return { valid: false, error: `Invalid connection ${connId}: textPosition must be a number between ${TEXT_POSITION_MIN} and ${TEXT_POSITION_MAX}` };
+        }
+        if (conn['text'] === undefined || isTextEmpty(conn['text'] as Text)) {
+          return { valid: false, error: `Invalid connection ${connId}: textPosition requires text` };
+        }
       }
       const sourceId = conn['sourceNodeId'] as string;
       const targetId = conn['targetNodeId'] as string;

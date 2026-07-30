@@ -25,11 +25,13 @@ import {
   DeleteConnectionCommand,
   SetNodeTextCommand,
   SetConnectionTextCommand,
+  MoveConnectionTextCommand,
   NodeRect,
 } from '../../services/commands';
 import { NodeComponent, GripCorner } from '../node/node';
 import { ConnectionLayerComponent } from '../connection-layer/connection-layer';
 import { HandleSide } from '../../models/node';
+import { TEXT_POSITION_DEFAULT } from '../../models/connection';
 import { Text } from '../../models/text';
 
 @Component({
@@ -82,6 +84,7 @@ import { Text } from '../../models/text';
           <app-connection-layer
             #connectionLayer
             (connectionSelect)="onConnectionSelect($event)"
+            (textDragStart)="onConnectionTextDragStart($event)"
             (textCommit)="onConnectionTextCommit($event)"
           />
 
@@ -268,6 +271,15 @@ export class CanvasComponent {
   private connectionSourceNodeId: string | null = null;
   private connectionSourceHandle: HandleSide | null = null;
 
+  // Connection Text card drag state — same 2px click/drag split as node drags;
+  // a null original position means the Text sat at the midpoint (absent field)
+  private isDraggingConnectionText = false;
+  private textDragConnectionId: string | null = null;
+  private textDragStartClientX = 0;
+  private textDragStartClientY = 0;
+  private textDragOriginalPosition: number | null = null;
+  private textDragMoved = false;
+
   transformStyle = () => {
     const vp = this.graphService.viewportState();
     return `translate(${vp.panX}px, ${vp.panY}px) scale(${vp.zoom})`;
@@ -416,6 +428,18 @@ export class CanvasComponent {
     }
   }
 
+  // Text card drag start — armed on mousedown; becomes a drag past 2px
+  onConnectionTextDragStart(event: { connectionId: string; event: MouseEvent }): void {
+    const conn = this.graphService.connections().find(c => c.id === event.connectionId);
+    if (!conn) return;
+    this.isDraggingConnectionText = true;
+    this.textDragConnectionId = event.connectionId;
+    this.textDragStartClientX = event.event.clientX;
+    this.textDragStartClientY = event.event.clientY;
+    this.textDragOriginalPosition = conn.textPosition ?? null;
+    this.textDragMoved = false;
+  }
+
   @HostListener('document:mousemove', ['$event'])
   onMouseMove(event: MouseEvent): void {
     // Raw client coordinates only — the canvas-coordinate conversion happens
@@ -475,6 +499,26 @@ export class CanvasComponent {
       const layer = this.connectionLayer();
       if (layer) {
         layer.updateConnectionDrag(canvasPos.x, canvasPos.y);
+      }
+    }
+
+    if (this.isDraggingConnectionText && this.textDragConnectionId) {
+      const vp = this.graphService.viewportState();
+      const dx = (event.clientX - this.textDragStartClientX) / vp.zoom;
+      const dy = (event.clientY - this.textDragStartClientY) / vp.zoom;
+      if (Math.abs(dx) > 2 || Math.abs(dy) > 2) {
+        this.textDragMoved = true;
+      }
+      if (this.textDragMoved) {
+        const canvasPos = this.clientPointToCanvas(event.clientX, event.clientY);
+        const layer = this.connectionLayer();
+        if (canvasPos && layer) {
+          const t = layer.textPositionAtPoint(this.textDragConnectionId, canvasPos.x, canvasPos.y);
+          // Transient, bypassing History — the Command comes on mouseup
+          if (t !== null) {
+            this.graphService.setConnectionTextPosition(this.textDragConnectionId, t);
+          }
+        }
       }
     }
   }
@@ -611,6 +655,33 @@ export class CanvasComponent {
       }
       this.connectionSourceNodeId = null;
       this.connectionSourceHandle = null;
+    }
+
+    // Finish a Text card drag — one MoveConnectionTextCommand, only if the
+    // 2px threshold was crossed and the stored position actually changed
+    if (this.isDraggingConnectionText && this.textDragConnectionId) {
+      if (this.textDragMoved) {
+        const conn = this.graphService.connections().find(c => c.id === this.textDragConnectionId);
+        const storedNow = conn?.textPosition ?? null;
+        // conn.text guards Text removed mid-drag (e.g. Ctrl+Z while dragging):
+        // a position command for a Text-less Connection would be a dead undo
+        // step that still wipes the redo stack
+        if (conn && conn.text && storedNow !== this.textDragOriginalPosition) {
+          const cmd = new MoveConnectionTextCommand(
+            this.graphService,
+            this.textDragConnectionId,
+            // A drag ending snapped at the midpoint stores nothing; redo
+            // re-applies via the setter's own normalization
+            storedNow ?? TEXT_POSITION_DEFAULT,
+            this.textDragOriginalPosition,
+          );
+          this.historyService.pushWithoutExecute(cmd);
+        }
+      }
+      this.isDraggingConnectionText = false;
+      this.textDragConnectionId = null;
+      this.textDragOriginalPosition = null;
+      this.textDragMoved = false;
     }
   }
 

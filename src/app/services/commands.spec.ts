@@ -17,6 +17,7 @@ import {
   CompoundCommand,
   SetNodeTextCommand,
   SetConnectionTextCommand,
+  MoveConnectionTextCommand,
   SetConnectionColorCommand,
   SetConnectionArrowheadCommand,
   InsertElementsCommand,
@@ -352,6 +353,88 @@ describe('Commands', () => {
 
       cmd.undo();
       expect(graphService.connections()[0].text).toEqual(textFromString('depends on'));
+    });
+
+    it('undoing a clear restores the Text at its exact previous position', () => {
+      const node1 = graphService.createNode('Node 1', 0, 0);
+      const node2 = graphService.createNode('Node 2', 100, 0);
+      const conn = graphService.createConnection(node1.id, 'right', node2.id, 'left');
+      graphService.setConnectionText(conn!.id, textFromString('depends on'));
+      graphService.setConnectionTextPosition(conn!.id, 0.8);
+
+      const cmd = new SetConnectionTextCommand(graphService, conn!.id, null);
+      cmd.execute();
+      expect('textPosition' in graphService.connections()[0]).toBe(false);
+
+      cmd.undo();
+      expect(graphService.connections()[0].text).toEqual(textFromString('depends on'));
+      expect(graphService.connections()[0].textPosition).toBe(0.8);
+    });
+  });
+
+  describe('MoveConnectionTextCommand', () => {
+    function makeAnnotatedConn() {
+      const n1 = graphService.createNode('N1', 0, 0);
+      const n2 = graphService.createNode('N2', 100, 0);
+      const conn = graphService.createConnection(n1.id, 'right', n2.id, 'left')!;
+      graphService.setConnectionText(conn.id, textFromString('depends on'));
+      return conn;
+    }
+
+    it('execute moves the Text; undo restores the midpoint default (absent)', () => {
+      const conn = makeAnnotatedConn();
+
+      const cmd = new MoveConnectionTextCommand(graphService, conn.id, 0.8);
+      cmd.execute();
+      expect(graphService.connections()[0].textPosition).toBe(0.8);
+
+      cmd.undo();
+      expect('textPosition' in graphService.connections()[0]).toBe(false);
+    });
+
+    it('undo restores the exact previous stored position', () => {
+      const conn = makeAnnotatedConn();
+      graphService.setConnectionTextPosition(conn.id, 0.3);
+
+      const cmd = new MoveConnectionTextCommand(graphService, conn.id, 0.8);
+      cmd.execute();
+      cmd.undo();
+
+      expect(graphService.connections()[0].textPosition).toBe(0.3);
+    });
+
+    it('a move ending snapped at the midpoint stores nothing; undo restores the old position', () => {
+      const conn = makeAnnotatedConn();
+      graphService.setConnectionTextPosition(conn.id, 0.3);
+
+      const cmd = new MoveConnectionTextCommand(graphService, conn.id, 0.5);
+      cmd.execute();
+      expect('textPosition' in graphService.connections()[0]).toBe(false);
+
+      cmd.undo();
+      expect(graphService.connections()[0].textPosition).toBe(0.3);
+    });
+
+    it('redo (execute after undo) re-applies the move', () => {
+      const conn = makeAnnotatedConn();
+
+      const cmd = new MoveConnectionTextCommand(graphService, conn.id, 0.8);
+      cmd.execute();
+      cmd.undo();
+      cmd.execute();
+
+      expect(graphService.connections()[0].textPosition).toBe(0.8);
+    });
+
+    it('accepts an explicit original position for drags applied transiently before the push', () => {
+      const conn = makeAnnotatedConn();
+      // Transient drag already moved the Text; the command is pushed without execute
+      graphService.setConnectionTextPosition(conn.id, 0.8);
+
+      const cmd = new MoveConnectionTextCommand(graphService, conn.id, 0.8, 0.3);
+      cmd.undo();
+
+      expect(graphService.connections()[0].textPosition).toBe(0.3);
     });
   });
 

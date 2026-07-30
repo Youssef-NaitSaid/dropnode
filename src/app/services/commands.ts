@@ -206,6 +206,9 @@ export class DeleteConnectionCommand implements Command {
 export class SetConnectionTextCommand implements Command {
   description = 'Set Connection Text';
   private originalText: Text | null;
+  // Captured alongside the Text: clearing discards the position (ADR-0013),
+  // so one undo must restore the annotation at its exact previous spot
+  private originalPosition: number | null;
 
   constructor(
     private graphService: GraphService,
@@ -214,6 +217,7 @@ export class SetConnectionTextCommand implements Command {
   ) {
     const conn = this.graphService.connections().find(c => c.id === connectionId);
     this.originalText = conn?.text ? structuredClone(conn.text) : null;
+    this.originalPosition = conn?.textPosition ?? null;
   }
 
   execute(): void {
@@ -223,6 +227,39 @@ export class SetConnectionTextCommand implements Command {
   undo(): void {
     // An absent original Text is restored by committing null (which clears it)
     this.graphService.setConnectionText(this.connectionId, this.originalText);
+    if (this.originalText !== null) {
+      this.graphService.setConnectionTextPosition(this.connectionId, this.originalPosition);
+    }
+  }
+}
+
+// One Text card drag commits as exactly one of these, pushed on mouseup only
+// if the drag crossed the 2px threshold (the drag itself updates transiently)
+export class MoveConnectionTextCommand implements Command {
+  description = 'Move Connection Text';
+  private originalPosition: number | null;
+
+  constructor(
+    private graphService: GraphService,
+    private connectionId: string,
+    private newPosition: number,
+    explicitOriginalPosition?: number | null,
+  ) {
+    if (explicitOriginalPosition !== undefined) {
+      this.originalPosition = explicitOriginalPosition;
+    } else {
+      const conn = this.graphService.connections().find(c => c.id === connectionId);
+      this.originalPosition = conn?.textPosition ?? null;
+    }
+  }
+
+  execute(): void {
+    this.graphService.setConnectionTextPosition(this.connectionId, this.newPosition);
+  }
+
+  undo(): void {
+    // A null original means the Text sat at the midpoint (absent field)
+    this.graphService.setConnectionTextPosition(this.connectionId, this.originalPosition);
   }
 }
 
