@@ -20,14 +20,14 @@ import {
   lucideLink,
   lucideHighlighter,
 } from '@ng-icons/lucide';
-import { EditorState, AllSelection, Plugin } from 'prosemirror-state';
+import { EditorState, AllSelection, Selection, Plugin } from 'prosemirror-state';
 import { EditorView } from 'prosemirror-view';
 import { MarkType } from 'prosemirror-model';
 import { keymap } from 'prosemirror-keymap';
 import { baseKeymap, toggleMark } from 'prosemirror-commands';
 import { history, undo, redo } from 'prosemirror-history';
 import { wrapInList, liftListItem, splitListItem } from 'prosemirror-schema-list';
-import { Text, TextSize, textEquals } from '../../models/text';
+import { Text, TextSize, textEquals, isTextEmpty } from '../../models/text';
 import { textSchema } from './text-schema';
 import { textToDoc, docToText } from './text-doc';
 
@@ -134,6 +134,7 @@ import { textToDoc, docToText } from './text-doc';
       white-space: pre-wrap;
       overflow-wrap: normal;
       line-height: 1.4;
+      cursor: text;
       caret-color: #7c5cff;
     }
     app-text-editor .pm-host .ProseMirror p {
@@ -248,8 +249,9 @@ export class TextEditorComponent implements AfterViewInit, OnDestroy {
     const doc = textSchema.nodeFromJSON(textToDoc(this.text()));
     const state = EditorState.create({
       doc,
-      // Open with the whole Text selected, matching the old input editors
-      selection: new AllSelection(doc),
+      // Pre-select existing Text so typing replaces it; for empty Text just
+      // place the caret (nothing to select)
+      selection: isTextEmpty(this.text()) ? Selection.atEnd(doc) : new AllSelection(doc),
       plugins: [
         history(),
         keymap({

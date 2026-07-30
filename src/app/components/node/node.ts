@@ -25,6 +25,7 @@ const GROUP_FILL_ALPHA = '4D';
       class="node-card"
       [class.group-card]="isGroup()"
       [class.selected]="isSelected()"
+      [class.editing]="isEditing()"
       [attr.data-node-id]="node().id"
       [style.left.px]="node().x"
       [style.top.px]="node().y"
@@ -122,6 +123,11 @@ const GROUP_FILL_ALPHA = '4D';
     .node-card.selected {
       border-color: #7c5cff;
       box-shadow: 0 0 0 2px rgba(124, 92, 255, 0.4), 0 6px 20px rgba(124, 92, 255, 0.25);
+    }
+    /* While editing, the card hosts a text editor — not a drag target */
+    .node-card.editing {
+      cursor: text;
+      user-select: text;
     }
     .group-card {
       padding: 0;
