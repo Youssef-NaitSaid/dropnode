@@ -56,6 +56,16 @@ export class ExportImageRenderer {
     wrapper.style.overflow = 'hidden';
     wrapper.style.backgroundColor = colors.background;
 
+    // The snapshot root is a plain div: the app's `html, body` rules match
+    // nothing inside the foreignObject, and text styles are inherited — so
+    // without this the export falls back to the SVG default (serif). Copy the
+    // live body's computed text defaults for a font-faithful render.
+    const bodyStyle = getComputedStyle(document.body);
+    wrapper.style.fontFamily = bodyStyle.fontFamily;
+    wrapper.style.fontSize = bodyStyle.fontSize;
+    wrapper.style.lineHeight = bodyStyle.lineHeight;
+    wrapper.style.letterSpacing = bodyStyle.letterSpacing;
+
     const style = document.createElement('style');
     style.textContent = this.collectCss();
     wrapper.appendChild(style);
