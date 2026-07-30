@@ -13,20 +13,35 @@ export type ArrowheadEnd = 'start' | 'end';
 export const DEFAULT_START_ARROWHEAD: ArrowheadType = 'none';
 export const DEFAULT_END_ARROWHEAD: ArrowheadType = 'arrow';
 
+// Text position along the curve (ADR-0013): a bezier parameter clamped away
+// from the endpoints so the Text card never buries an Arrowhead or a node.
+// Absent means the midpoint; only deviations are stored.
+export const TEXT_POSITION_MIN = 0.1;
+export const TEXT_POSITION_MAX = 0.9;
+export const TEXT_POSITION_DEFAULT = 0.5;
+
 export interface Connection {
   id: string;
   sourceNodeId: string;
   sourceHandle: HandleSide;
   targetNodeId: string;
   targetHandle: HandleSide;
-  // Optional Text shown at the curve midpoint; absent means unannotated
+  // Optional Text shown along the curve; absent means unannotated
   text?: Text;
+  // Bezier parameter where the Text card sits (ADR-0013); absent means the
+  // midpoint, and the field may only exist alongside text
+  textPosition?: number;
   // Curve color from NODE_PALETTE; absent means the default stroke
   color?: string;
   // Arrowhead at the source endpoint; absent means DEFAULT_START_ARROWHEAD
   startArrowhead?: ArrowheadType;
   // Arrowhead at the target endpoint; absent means DEFAULT_END_ARROWHEAD
   endArrowhead?: ArrowheadType;
+}
+
+/** The position a Connection's Text actually occupies (stored value, or the midpoint). */
+export function effectiveTextPosition(conn: Connection): number {
+  return conn.textPosition ?? TEXT_POSITION_DEFAULT;
 }
 
 /** The default Arrowhead shape for an endpoint when no value is stored. */

@@ -273,6 +273,72 @@ describe('GraphService', () => {
 
       expect('text' in conn!).toBe(false);
     });
+
+    it('clearing the Text also discards its textPosition', () => {
+      const node1 = service.createNode('Node 1', 0, 0);
+      const node2 = service.createNode('Node 2', 300, 0);
+      const conn = service.createConnection(node1.id, 'right', node2.id, 'left');
+      service.setConnectionText(conn!.id, textFromString('depends on'));
+      service.setConnectionTextPosition(conn!.id, 0.8);
+
+      service.setConnectionText(conn!.id, null);
+
+      expect('textPosition' in service.connections()[0]).toBe(false);
+    });
+  });
+
+  describe('setConnectionTextPosition', () => {
+    function makeAnnotatedConn(): Connection {
+      const n1 = service.createNode('N1', 0, 0);
+      const n2 = service.createNode('N2', 300, 0);
+      const conn = service.createConnection(n1.id, 'right', n2.id, 'left')!;
+      service.setConnectionText(conn.id, textFromString('depends on'));
+      return conn;
+    }
+
+    it('stores the position on a Connection carrying Text', () => {
+      const conn = makeAnnotatedConn();
+      service.setConnectionTextPosition(conn.id, 0.75);
+      expect(service.connections()[0].textPosition).toBe(0.75);
+    });
+
+    it('clamps the position to [0.1, 0.9]', () => {
+      const conn = makeAnnotatedConn();
+      service.setConnectionTextPosition(conn.id, 0.02);
+      expect(service.connections()[0].textPosition).toBe(0.1);
+
+      service.setConnectionTextPosition(conn.id, 1.4);
+      expect(service.connections()[0].textPosition).toBe(0.9);
+    });
+
+    it('normalizes the midpoint to an absent field', () => {
+      const conn = makeAnnotatedConn();
+      service.setConnectionTextPosition(conn.id, 0.8);
+      service.setConnectionTextPosition(conn.id, 0.5);
+      expect('textPosition' in service.connections()[0]).toBe(false);
+    });
+
+    it('removes the field when committing null', () => {
+      const conn = makeAnnotatedConn();
+      service.setConnectionTextPosition(conn.id, 0.8);
+      service.setConnectionTextPosition(conn.id, null);
+      expect('textPosition' in service.connections()[0]).toBe(false);
+    });
+
+    it('is a silent no-op on a Connection without Text', () => {
+      const n1 = service.createNode('N1', 0, 0);
+      const n2 = service.createNode('N2', 300, 0);
+      const conn = service.createConnection(n1.id, 'right', n2.id, 'left')!;
+
+      expect(() => service.setConnectionTextPosition(conn.id, 0.8)).not.toThrow();
+      expect('textPosition' in service.connections()[0]).toBe(false);
+    });
+
+    it('is a silent no-op for an unknown connection id', () => {
+      makeAnnotatedConn();
+      expect(() => service.setConnectionTextPosition('nonexistent', 0.8)).not.toThrow();
+      expect('textPosition' in service.connections()[0]).toBe(false);
+    });
   });
 
   describe('setConnectionColor', () => {
@@ -789,6 +855,70 @@ describe('GraphService', () => {
       expect('color' in c).toBe(false);
       expect('startArrowhead' in c).toBe(false);
       expect('endArrowhead' in c).toBe(false);
+    });
+
+    function textPositionPayload(textPosition: unknown, withText = true) {
+      return {
+        nodes: [
+          { id: 'n1', label: 'Node 1', x: 0, y: 0, width: 160, height: 48 },
+          { id: 'n2', label: 'Node 2', x: 200, y: 0, width: 160, height: 48 },
+        ],
+        connections: [
+          {
+            id: 'c1', sourceNodeId: 'n1', sourceHandle: 'right', targetNodeId: 'n2', targetHandle: 'left',
+            ...(withText ? { text: [{ kind: 'paragraph', runs: [{ text: 'depends on' }] }] } : {}),
+            textPosition,
+          },
+        ],
+      } as any;
+    }
+
+    it('non-numeric textPosition rejected wholesale', () => {
+      const result = service.importGraph(textPositionPayload('0.5'));
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('Invalid connection c1: textPosition must be a number between 0.1 and 0.9');
+    });
+
+    it('out-of-range textPosition rejected wholesale', () => {
+      expect(service.importGraph(textPositionPayload(0.95)).success).toBe(false);
+      expect(service.importGraph(textPositionPayload(0.05)).success).toBe(false);
+      expect(service.importGraph(textPositionPayload(NaN)).success).toBe(false);
+    });
+
+    it('textPosition on a Connection without Text rejected wholesale', () => {
+      const result = service.importGraph(textPositionPayload(0.8, false));
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('Invalid connection c1: textPosition requires text');
+    });
+
+    it('textPosition alongside empty Text rejected wholesale', () => {
+      const payload = textPositionPayload(0.8);
+      payload.connections[0].text = [];
+      const result = service.importGraph(payload);
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('Invalid connection c1: textPosition requires text');
+    });
+
+    it('a rejected textPosition leaves the existing graph untouched', () => {
+      const n1 = service.createNode('Kept', 0, 0);
+      service.importGraph(textPositionPayload(7));
+      expect(service.nodes().length).toBe(1);
+      expect(service.nodes()[0].id).toBe(n1.id);
+    });
+
+    it('valid textPosition values import, including the boundaries', () => {
+      const result = service.importGraph(textPositionPayload(0.9));
+      expect(result.success).toBe(true);
+      expect(service.connections()[0].textPosition).toBe(0.9);
+
+      expect(service.importGraph(textPositionPayload(0.1)).success).toBe(true);
+      expect(service.connections()[0].textPosition).toBe(0.1);
+    });
+
+    it('normalizes an explicitly-midpoint textPosition to absent on import (canonical form)', () => {
+      const result = service.importGraph(textPositionPayload(0.5));
+      expect(result.success).toBe(true);
+      expect('textPosition' in service.connections()[0]).toBe(false);
     });
   });
 
