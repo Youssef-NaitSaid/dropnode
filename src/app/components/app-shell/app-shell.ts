@@ -1,4 +1,4 @@
-import { Component, inject, ChangeDetectionStrategy, viewChild, effect } from '@angular/core';
+import { Component, inject, ChangeDetectionStrategy, viewChild, effect, untracked } from '@angular/core';
 import { RouterOutlet } from '@angular/router';
 import { ToastComponent } from '../toast/toast';
 import { ImportDialogComponent } from '../import-dialog/import-dialog';
@@ -53,16 +53,19 @@ export class AppShellComponent {
   constructor() {
     // The toolbar (Scratch Canvas) and Sidebar Project rows both request the
     // import dialog through the service; the shell owns the single instance.
+    // open() is untracked (editor-page pattern): the effect must depend only
+    // on the request counter, never on signals the dialogs touch internally.
     effect(() => {
       if (this.importDialogService.openRequests() > 0) {
-        this.importDialog()?.open();
+        untracked(() => this.importDialog()?.open());
       }
     });
 
     // Same pattern for the "Export as…" dialog (toolbar + open Project's row).
     effect(() => {
       if (this.exportDialogService.openRequests() > 0) {
-        this.exportDialog()?.open(this.exportDialogService.projectId());
+        const projectId = untracked(this.exportDialogService.projectId);
+        untracked(() => this.exportDialog()?.open(projectId));
       }
     });
   }

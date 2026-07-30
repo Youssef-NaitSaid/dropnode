@@ -1,6 +1,6 @@
 import {
   Component, signal, computed, inject, effect, viewChild, ElementRef,
-  ChangeDetectionStrategy, OnDestroy,
+  ChangeDetectionStrategy, OnDestroy, untracked,
 } from '@angular/core';
 import { NgIcon, provideIcons } from '@ng-icons/core';
 import { lucideX, lucideDownload } from '@ng-icons/lucide';
@@ -208,7 +208,9 @@ export class ExportDialogComponent implements OnDestroy {
   }
 
   private replacePreviewUrl(url: string | null): void {
-    const previous = this.previewUrl();
+    // untracked: revoking the old URL must never register a dependency on
+    // previewUrl in whatever reactive context calls into open()/close()
+    const previous = untracked(this.previewUrl);
     if (previous) URL.revokeObjectURL(previous);
     this.previewUrl.set(url);
   }
