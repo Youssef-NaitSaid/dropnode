@@ -30,7 +30,8 @@ export class ContextMenuService {
   // Requests for the thin UI to open an existing inline editor. The Node and
   // Connection-Layer components watch these and clear them once consumed.
   readonly renameRequest = signal<string | null>(null);
-  readonly editLabelRequest = signal<string | null>(null);
+  readonly editTextRequest = signal<string | null>(null);
+  readonly connectionTextRequest = signal<string | null>(null);
 
   // Which menu the thin UI should render for the currently-open context.
   readonly menuKind = computed(() => this.target()?.kind ?? null);
@@ -114,10 +115,10 @@ export class ContextMenuService {
     }
   }
 
-  /** Ask the UI to open the target Node's inline label editor. */
+  /** Ask the UI to open the target Group's inline Label editor (Groups only). */
   rename(): void {
     const target = this.target();
-    if (target?.kind === 'node') {
+    if (target?.kind === 'node' && this.isGroup(target.nodeId)) {
       this.renameRequest.set(target.nodeId);
     }
   }
@@ -126,15 +127,21 @@ export class ContextMenuService {
     this.renameRequest.set(null);
   }
 
-  /** Ask the UI to open the target Connection's inline Label editor. */
-  editLabel(): void {
+  /** Ask the UI to open the target Node's or Connection's Text editor. */
+  editText(): void {
     const target = this.target();
-    if (target?.kind === 'connection') {
-      this.editLabelRequest.set(target.connectionId);
+    if (target?.kind === 'node' && !this.isGroup(target.nodeId)) {
+      this.editTextRequest.set(target.nodeId);
+    } else if (target?.kind === 'connection') {
+      this.connectionTextRequest.set(target.connectionId);
     }
   }
 
-  clearEditLabelRequest(): void {
-    this.editLabelRequest.set(null);
+  clearEditTextRequest(): void {
+    this.editTextRequest.set(null);
+  }
+
+  clearConnectionTextRequest(): void {
+    this.connectionTextRequest.set(null);
   }
 }

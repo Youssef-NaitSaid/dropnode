@@ -2,6 +2,7 @@ import { TestBed } from '@angular/core/testing';
 import { ContextMenuService } from './context-menu.service';
 import { GraphService } from './graph.service';
 import { HistoryService } from './history.service';
+import { textFromString } from '../models/text';
 
 describe('ContextMenuService', () => {
   let service: ContextMenuService;
@@ -95,7 +96,7 @@ describe('ContextMenuService', () => {
 
       expect(graphService.nodes().length).toBe(1);
       const node = graphService.nodes()[0];
-      expect(node.label).toBe('New Node');
+      expect(node.text).toEqual(textFromString('New Node'));
       // 160x48 node centered on the point → point minus 60/24
       expect(node.x).toBe(140);
       expect(node.y).toBe(96);
@@ -114,7 +115,7 @@ describe('ContextMenuService', () => {
 
       const child = graphService.nodes().find(n => n.parentId === group.id);
       expect(child).toBeTruthy();
-      expect(child!.label).toBe('New Node');
+      expect(child!.text).toEqual(textFromString('New Node'));
       expect(child!.x).toBe(140);
       expect(child!.y).toBe(96);
     });
@@ -170,20 +171,29 @@ describe('ContextMenuService', () => {
     });
   });
 
-  describe('rename / editLabel requests', () => {
-    it('rename exposes the Node id to edit and never touches History', () => {
+  describe('rename / editText requests', () => {
+    it('rename exposes the Group id to edit and never touches History', () => {
+      const group = graphService.createGroup('G', 0, 0);
+      service.openFor({ kind: 'node', nodeId: group.id }, 10, 10);
+
+      service.rename();
+
+      expect(service.renameRequest()).toBe(group.id);
+      expect(historyService.canUndo()).toBe(false);
+    });
+
+    it('rename is a no-op for a regular node (nodes carry Text, not a Label)', () => {
       const node = graphService.createNode('A', 0, 0);
       service.openFor({ kind: 'node', nodeId: node.id }, 10, 10);
 
       service.rename();
 
-      expect(service.renameRequest()).toBe(node.id);
-      expect(historyService.canUndo()).toBe(false);
+      expect(service.renameRequest()).toBeNull();
     });
 
     it('a rename request is cleared once consumed', () => {
-      const node = graphService.createNode('A', 0, 0);
-      service.openFor({ kind: 'node', nodeId: node.id }, 10, 10);
+      const group = graphService.createGroup('G', 0, 0);
+      service.openFor({ kind: 'node', nodeId: group.id }, 10, 10);
       service.rename();
 
       service.clearRenameRequest();
@@ -191,28 +201,59 @@ describe('ContextMenuService', () => {
       expect(service.renameRequest()).toBeNull();
     });
 
-    it('editLabel exposes the Connection id to edit and never touches History', () => {
-      const a = graphService.createNode('A', 0, 0);
-      const b = graphService.createNode('B', 300, 0);
-      const conn = graphService.createConnection(a.id, 'right', b.id, 'left')!;
-      service.openFor({ kind: 'connection', connectionId: conn.id }, 10, 10);
+    it('editText on a regular node exposes the node id and never touches History', () => {
+      const node = graphService.createNode('A', 0, 0);
+      service.openFor({ kind: 'node', nodeId: node.id }, 10, 10);
 
-      service.editLabel();
+      service.editText();
 
-      expect(service.editLabelRequest()).toBe(conn.id);
+      expect(service.editTextRequest()).toBe(node.id);
+      expect(service.connectionTextRequest()).toBeNull();
       expect(historyService.canUndo()).toBe(false);
     });
 
-    it('an editLabel request is cleared once consumed', () => {
+    it('editText on a Group is a no-op (Groups are renamed, not text-edited)', () => {
+      const group = graphService.createGroup('G', 0, 0);
+      service.openFor({ kind: 'node', nodeId: group.id }, 10, 10);
+
+      service.editText();
+
+      expect(service.editTextRequest()).toBeNull();
+    });
+
+    it('an editText request is cleared once consumed', () => {
+      const node = graphService.createNode('A', 0, 0);
+      service.openFor({ kind: 'node', nodeId: node.id }, 10, 10);
+      service.editText();
+
+      service.clearEditTextRequest();
+
+      expect(service.editTextRequest()).toBeNull();
+    });
+
+    it('editText on a Connection exposes the connection id and never touches History', () => {
       const a = graphService.createNode('A', 0, 0);
       const b = graphService.createNode('B', 300, 0);
       const conn = graphService.createConnection(a.id, 'right', b.id, 'left')!;
       service.openFor({ kind: 'connection', connectionId: conn.id }, 10, 10);
-      service.editLabel();
 
-      service.clearEditLabelRequest();
+      service.editText();
 
-      expect(service.editLabelRequest()).toBeNull();
+      expect(service.connectionTextRequest()).toBe(conn.id);
+      expect(service.editTextRequest()).toBeNull();
+      expect(historyService.canUndo()).toBe(false);
+    });
+
+    it('a connection editText request is cleared once consumed', () => {
+      const a = graphService.createNode('A', 0, 0);
+      const b = graphService.createNode('B', 300, 0);
+      const conn = graphService.createConnection(a.id, 'right', b.id, 'left')!;
+      service.openFor({ kind: 'connection', connectionId: conn.id }, 10, 10);
+      service.editText();
+
+      service.clearConnectionTextRequest();
+
+      expect(service.connectionTextRequest()).toBeNull();
     });
   });
 });

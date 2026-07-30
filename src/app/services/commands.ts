@@ -1,6 +1,7 @@
 import { Command } from '../models/command';
 import { GraphNode, HandleSide } from '../models/node';
 import { Connection } from '../models/connection';
+import { Text } from '../models/text';
 import { GraphService } from './graph.service';
 
 export class CreateNodeCommand implements Command {
@@ -67,6 +68,7 @@ export class MoveNodeCommand implements Command {
   }
 }
 
+// Groups only — regular nodes carry Text, changed via SetNodeTextCommand
 export class RenameNodeCommand implements Command {
   description = 'Rename Node';
   private originalLabel = '';
@@ -78,7 +80,7 @@ export class RenameNodeCommand implements Command {
   ) {
     const node = this.graphService.nodes().find(n => n.id === nodeId);
     if (node) {
-      this.originalLabel = node.label;
+      this.originalLabel = node.label ?? '';
     }
   }
 
@@ -88,6 +90,30 @@ export class RenameNodeCommand implements Command {
 
   undo(): void {
     this.graphService.updateNodeLabel(this.nodeId, this.originalLabel);
+  }
+}
+
+// One Text edit session commits as exactly one of these; unchanged content
+// never constructs a command (the editor guards that)
+export class SetNodeTextCommand implements Command {
+  description = 'Set Node Text';
+  private originalText: Text = [];
+
+  constructor(
+    private graphService: GraphService,
+    private nodeId: string,
+    private newText: Text,
+  ) {
+    const node = this.graphService.nodes().find(n => n.id === nodeId);
+    this.originalText = structuredClone(node?.text ?? []);
+  }
+
+  execute(): void {
+    this.graphService.setNodeText(this.nodeId, this.newText);
+  }
+
+  undo(): void {
+    this.graphService.setNodeText(this.nodeId, this.originalText);
   }
 }
 
@@ -177,26 +203,26 @@ export class DeleteConnectionCommand implements Command {
   }
 }
 
-export class SetConnectionLabelCommand implements Command {
-  description = 'Set Connection Label';
-  private originalLabel: string | undefined;
+export class SetConnectionTextCommand implements Command {
+  description = 'Set Connection Text';
+  private originalText: Text | null;
 
   constructor(
     private graphService: GraphService,
     private connectionId: string,
-    private newLabel: string,
+    private newText: Text | null,
   ) {
     const conn = this.graphService.connections().find(c => c.id === connectionId);
-    this.originalLabel = conn?.label;
+    this.originalText = conn?.text ? structuredClone(conn.text) : null;
   }
 
   execute(): void {
-    this.graphService.setConnectionLabel(this.connectionId, this.newLabel);
+    this.graphService.setConnectionText(this.connectionId, this.newText);
   }
 
   undo(): void {
-    // An absent original label is restored by committing empty (which clears it)
-    this.graphService.setConnectionLabel(this.connectionId, this.originalLabel ?? '');
+    // An absent original Text is restored by committing null (which clears it)
+    this.graphService.setConnectionText(this.connectionId, this.originalText);
   }
 }
 

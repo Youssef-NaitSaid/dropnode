@@ -19,12 +19,14 @@ import {
   CompoundCommand,
   CreateConnectionCommand,
   DeleteConnectionCommand,
-  SetConnectionLabelCommand,
+  SetNodeTextCommand,
+  SetConnectionTextCommand,
   NodeRect,
 } from '../../services/commands';
 import { NodeComponent, GripCorner } from '../node/node';
 import { ConnectionLayerComponent } from '../connection-layer/connection-layer';
 import { HandleSide } from '../../models/node';
+import { Text } from '../../models/text';
 
 @Component({
   selector: 'app-canvas',
@@ -61,6 +63,7 @@ import { HandleSide } from '../../models/node';
                 [snapTarget]="currentSnapTarget"
                 (startMove)="onNodeStartMove($event)"
                 (rename)="onNodeRename($event)"
+                (textCommit)="onNodeTextCommit($event)"
                 (handleDragStart)="onHandleDragStart($event)"
                 (sizeChanged)="onNodeSizeChanged($event)"
                 (startResize)="onNodeStartResize($event)"
@@ -72,7 +75,7 @@ import { HandleSide } from '../../models/node';
           <app-connection-layer
             #connectionLayer
             (connectionSelect)="onConnectionSelect($event)"
-            (labelCommit)="onConnectionLabelCommit($event)"
+            (textCommit)="onConnectionTextCommit($event)"
           />
 
           <div class="nodes-container">
@@ -83,6 +86,7 @@ import { HandleSide } from '../../models/node';
                 [snapTarget]="currentSnapTarget"
                 (startMove)="onNodeStartMove($event)"
                 (rename)="onNodeRename($event)"
+                (textCommit)="onNodeTextCommit($event)"
                 (handleDragStart)="onHandleDragStart($event)"
                 (sizeChanged)="onNodeSizeChanged($event)"
                 (startResize)="onNodeStartResize($event)"
@@ -113,20 +117,25 @@ import { HandleSide } from '../../models/node';
                 <ng-icon name="lucideSquarePlus" />
                 <span>Add node</span>
               </button>
+              <button hlmDropdownMenuItem (triggered)="contextMenuService.rename()">
+                <ng-icon name="lucidePencil" />
+                <span>Rename</span>
+              </button>
+            } @else {
+              <button hlmDropdownMenuItem (triggered)="contextMenuService.editText()">
+                <ng-icon name="lucidePencil" />
+                <span>Edit text</span>
+              </button>
             }
-            <button hlmDropdownMenuItem (triggered)="contextMenuService.rename()">
-              <ng-icon name="lucidePencil" />
-              <span>Rename</span>
-            </button>
             <button hlmDropdownMenuItem variant="destructive" (triggered)="contextMenuService.deleteTarget()">
               <ng-icon name="lucideTrash2" />
               <span>Delete</span>
             </button>
           }
           @case ('connection') {
-            <button hlmDropdownMenuItem (triggered)="contextMenuService.editLabel()">
+            <button hlmDropdownMenuItem (triggered)="contextMenuService.editText()">
               <ng-icon name="lucideTag" />
-              <span>Edit label</span>
+              <span>Edit text</span>
             </button>
             <button hlmDropdownMenuItem variant="destructive" (triggered)="contextMenuService.deleteTarget()">
               <ng-icon name="lucideTrash2" />
@@ -530,8 +539,15 @@ export class CanvasComponent {
     }
   }
 
+  // Group Label rename (Groups only)
   onNodeRename(event: { nodeId: string; newLabel: string }): void {
     const cmd = new RenameNodeCommand(this.graphService, event.nodeId, event.newLabel);
+    this.historyService.execute(cmd);
+  }
+
+  // One Text edit session = one Command; the node already filtered empty/unchanged
+  onNodeTextCommit(event: { nodeId: string; newText: Text }): void {
+    const cmd = new SetNodeTextCommand(this.graphService, event.nodeId, event.newText);
     this.historyService.execute(cmd);
   }
 
@@ -550,8 +566,8 @@ export class CanvasComponent {
     this.graphService.selectConnection(connectionId);
   }
 
-  onConnectionLabelCommit(event: { connectionId: string; newLabel: string }): void {
-    const cmd = new SetConnectionLabelCommand(this.graphService, event.connectionId, event.newLabel);
+  onConnectionTextCommit(event: { connectionId: string; newText: Text | null }): void {
+    const cmd = new SetConnectionTextCommand(this.graphService, event.connectionId, event.newText);
     this.historyService.execute(cmd);
   }
 

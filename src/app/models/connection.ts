@@ -1,4 +1,5 @@
 import { HandleSide } from './node';
+import { Text } from './text';
 
 export interface Connection {
   id: string;
@@ -6,6 +7,6 @@ export interface Connection {
   sourceHandle: HandleSide;
   targetNodeId: string;
   targetHandle: HandleSide;
-  // Connection Label: optional annotation text; absent means unlabeled
-  label?: string;
+  // Optional Text shown at the curve midpoint; absent means unannotated
+  text?: Text;
 }

@@ -3,7 +3,10 @@ import {
   ChangeDetectionStrategy, AfterViewInit, viewChild, ElementRef, inject,
 } from '@angular/core';
 import { GraphNode, HandleSide } from '../../models/node';
+import { Text, isTextEmpty } from '../../models/text';
 import { HandleComponent } from '../handle/handle';
+import { TextViewComponent } from '../text-view/text-view';
+import { TextEditorComponent } from '../text-editor/text-editor';
 import { ContextMenuService } from '../../services/context-menu.service';
 
 export type GripCorner = 'nw' | 'ne' | 'sw' | 'se';
@@ -16,12 +19,13 @@ const GROUP_FILL_ALPHA = '4D';
   selector: 'app-node',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [HandleComponent],
+  imports: [HandleComponent, TextViewComponent, TextEditorComponent],
   template: `
     <div
       class="node-card"
       [class.group-card]="isGroup()"
       [class.selected]="isSelected()"
+      [class.editing]="isEditing()"
       [attr.data-node-id]="node().id"
       [style.left.px]="node().x"
       [style.top.px]="node().y"
@@ -50,18 +54,17 @@ const GROUP_FILL_ALPHA = '4D';
         </div>
       } @else {
         @if (isEditing()) {
-          <input
-            #editInput
-            class="node-label-input"
-            [value]="node().label"
-            (blur)="finishEdit($event)"
-            (keydown.enter)="finishEdit($event)"
-            (keydown.escape)="cancelEdit()"
-            (mousedown)="$event.stopPropagation()"
-            (contextmenu)="$event.stopPropagation()"
-          />
+          <div class="node-text">
+            <app-text-editor
+              [text]="nodeText()"
+              (commit)="onTextCommit($event)"
+              (cancelled)="onTextCancel()"
+            />
+          </div>
         } @else {
-          <span #labelRef class="node-label">{{ node().label }}</span>
+          <div #textWrap class="node-text">
+            <app-text-view [text]="nodeText()" />
+          </div>
         }
       }
 
@@ -121,6 +124,11 @@ const GROUP_FILL_ALPHA = '4D';
       border-color: #7c5cff;
       box-shadow: 0 0 0 2px rgba(124, 92, 255, 0.4), 0 6px 20px rgba(124, 92, 255, 0.25);
     }
+    /* While editing, the card hosts a text editor — not a drag target */
+    .node-card.editing {
+      cursor: text;
+      user-select: text;
+    }
     .group-card {
       padding: 0;
       align-items: flex-start;
@@ -148,11 +156,14 @@ const GROUP_FILL_ALPHA = '4D';
       overflow: hidden;
       text-overflow: ellipsis;
     }
-    .node-label {
+    .node-text {
+      width: 100%;
       color: #1a1a2e;
       font-size: 14px;
       font-weight: 500;
-      white-space: nowrap;
+      text-align: center;
+      --tv-size-s: 11px;
+      --tv-size-l: 18px;
     }
     .node-label-input {
       background: transparent;
@@ -217,11 +228,14 @@ export class NodeComponent implements AfterViewInit {
   snapTarget = input<{ nodeId: string; handle: HandleSide } | null>(null);
 
   startMove = output<{ nodeId: string; event: MouseEvent }>();
+  // Group Label rename (Groups only)
   rename = output<{ nodeId: string; newLabel: string }>();
+  // Regular node Text commit (one edit session = one Command upstream)
+  textCommit = output<{ nodeId: string; newText: Text }>();
   handleDragStart = output<{ nodeId: string; handle: HandleSide; event: MouseEvent }>();
   startResize = output<{ nodeId: string; corner: GripCorner; minWidth: number; minHeight: number; event: MouseEvent }>();
   createChild = output<{ parentId: string; clientX: number; clientY: number }>();
-  private labelRef = viewChild<ElementRef<HTMLSpanElement>>('labelRef');
+  private textWrap = viewChild<ElementRef<HTMLDivElement>>('textWrap');
   sizeChanged = output<{ nodeId: string; width: number; height: number }>();
 
   private editInput = viewChild<ElementRef<HTMLInputElement>>('editInput');
@@ -229,7 +243,7 @@ export class NodeComponent implements AfterViewInit {
 
   constructor() {
     // autofocus doesn't fire for dynamically inserted inputs; focus and
-    // select the text once the editor renders
+    // select the Group Label text once the editor renders
     effect(() => {
       const input = this.editInput()?.nativeElement;
       if (input) {
@@ -238,11 +252,19 @@ export class NodeComponent implements AfterViewInit {
       }
     });
 
-    // The context menu's "Rename" opens this node's inline editor
+    // The context menu's "Rename" opens a Group's inline Label editor
     effect(() => {
       if (this.contextMenuService.renameRequest() === this.node().id) {
         this.isEditing.set(true);
         this.contextMenuService.clearRenameRequest();
+      }
+    });
+
+    // The context menu's "Edit text" opens a regular node's Text editor
+    effect(() => {
+      if (this.contextMenuService.editTextRequest() === this.node().id) {
+        this.isEditing.set(true);
+        this.contextMenuService.clearEditTextRequest();
       }
     });
   }
@@ -252,6 +274,8 @@ export class NodeComponent implements AfterViewInit {
   gripCorners: GripCorner[] = ['nw', 'ne', 'sw', 'se'];
 
   isGroup = computed(() => this.node().kind === 'group');
+
+  nodeText = computed<Text>(() => this.node().text ?? []);
 
   cardBackground = computed(() => {
     const base = this.node().color ?? DEFAULT_NODE_BACKGROUND;
@@ -273,6 +297,7 @@ export class NodeComponent implements AfterViewInit {
 
   onDoubleClick(event: MouseEvent): void {
     event.stopPropagation();
+    if (this.isEditing()) return;
     if (this.isGroup()) {
       // Group body: create a child node at the cursor (label strip edits instead)
       this.createChild.emit({
@@ -290,17 +315,31 @@ export class NodeComponent implements AfterViewInit {
     this.isEditing.set(true);
   }
 
+  // Group Label commit: empty or unchanged labels are never committed
   finishEdit(event: Event): void {
     const input = event.target as HTMLInputElement;
     const newLabel = input.value.trim();
-    if (newLabel && newLabel !== this.node().label) {
+    if (newLabel && newLabel !== (this.node().label ?? '')) {
       this.rename.emit({ nodeId: this.node().id, newLabel });
+    }
+    this.isEditing.set(false);
+  }
+
+  cancelEdit(): void {
+    this.isEditing.set(false);
+  }
+
+  // Text commit: committing empty reverts to the previous Text (nodes always
+  // carry Text); the editor already guards unchanged content
+  onTextCommit(newText: Text): void {
+    if (!isTextEmpty(newText)) {
+      this.textCommit.emit({ nodeId: this.node().id, newText });
     }
     this.isEditing.set(false);
     setTimeout(() => this.measureAndEmitSize(), 0);
   }
 
-  cancelEdit(): void {
+  onTextCancel(): void {
     this.isEditing.set(false);
   }
 
@@ -317,38 +356,76 @@ export class NodeComponent implements AfterViewInit {
       nodeId: this.node().id,
       corner,
       minWidth: this.minLabelWidth(),
-      minHeight: 48,
+      minHeight: this.minTextHeight(),
       event,
     });
   }
 
-  // The label-derived auto-size acts as the minimum width when resizing
+  // The Text-derived auto-size acts as the minimum rect when resizing
   private minLabelWidth(): number {
-    return Math.max(120, this.measureLabelWidth() ?? 0);
+    return Math.max(120, this.measureMinContentWidth() ?? 0);
   }
 
-  private measureLabelWidth(): number | null {
-    const el = this.labelRef()?.nativeElement;
-    if (!el) return null;
-    const parent = el.parentElement;
-    if (!parent) return null;
+  private minTextHeight(): number {
+    return Math.max(48, this.measureContentHeight() ?? 0);
+  }
+
+  private paddings(): { h: number; v: number } | null {
+    const el = this.textWrap()?.nativeElement;
+    const parent = el?.parentElement;
+    if (!el || !parent) return null;
     const cs = getComputedStyle(parent);
-    const padL = parseFloat(cs.paddingLeft) || 0;
-    const padR = parseFloat(cs.paddingRight) || 0;
-    const bordL = parseFloat(cs.borderLeftWidth) || 0;
-    const bordR = parseFloat(cs.borderRightWidth) || 0;
-    return el.scrollWidth + padL + padR + bordL + bordR;
+    return {
+      h: (parseFloat(cs.paddingLeft) || 0) + (parseFloat(cs.paddingRight) || 0) +
+         (parseFloat(cs.borderLeftWidth) || 0) + (parseFloat(cs.borderRightWidth) || 0),
+      v: (parseFloat(cs.paddingTop) || 0) + (parseFloat(cs.paddingBottom) || 0) +
+         (parseFloat(cs.borderTopWidth) || 0) + (parseFloat(cs.borderBottomWidth) || 0),
+    };
   }
 
-  // Grow-only: the measured label width raises the node's width floor but
-  // never shrinks a manually grown node
+  // Widest unbreakable line: measured with width:min-content, so wrapped
+  // paragraphs don't inflate the floor
+  private measureMinContentWidth(): number | null {
+    const el = this.textWrap()?.nativeElement;
+    const pad = this.paddings();
+    if (!el || !pad) return null;
+    const previous = el.style.width;
+    el.style.width = 'min-content';
+    const width = Math.ceil(el.getBoundingClientRect().width / this.zoomFactor());
+    el.style.width = previous;
+    return width + pad.h;
+  }
+
+  private measureContentHeight(): number | null {
+    const el = this.textWrap()?.nativeElement;
+    const pad = this.paddings();
+    if (!el || !pad) return null;
+    const height = Math.ceil(el.getBoundingClientRect().height / this.zoomFactor());
+    return height + pad.v;
+  }
+
+  // getBoundingClientRect is scaled by the shared pan/zoom transform; divide
+  // it back out to get canvas-unit sizes
+  private zoomFactor(): number {
+    const el = this.textWrap()?.nativeElement;
+    if (!el) return 1;
+    const reference = el.parentElement!;
+    const layoutWidth = reference.offsetWidth;
+    if (layoutWidth === 0) return 1;
+    return reference.getBoundingClientRect().width / layoutWidth;
+  }
+
+  // Grow-only: wrapped Text raises the node's width floor (widest unbreakable
+  // line) and height, but never shrinks a manually grown node
   private measureAndEmitSize(): void {
     if (this.isGroup()) return;
-    const measured = this.measureLabelWidth();
-    if (measured === null) return;
-    const measuredWidth = Math.max(120, measured);
-    if (measuredWidth > this.node().width + 1) {
-      this.sizeChanged.emit({ nodeId: this.node().id, width: measuredWidth, height: this.node().height });
+    const minWidth = this.measureMinContentWidth();
+    const minHeight = this.measureContentHeight();
+    if (minWidth === null || minHeight === null) return;
+    const width = Math.max(120, minWidth, this.node().width);
+    const height = Math.max(48, minHeight, this.node().height);
+    if (width > this.node().width + 1 || height > this.node().height + 1) {
+      this.sizeChanged.emit({ nodeId: this.node().id, width, height });
     }
   }
 
