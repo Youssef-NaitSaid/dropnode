@@ -156,10 +156,26 @@
 
 - all keyboard shortcuts are ignored while focus is in an input, textarea, or contenteditable element
 - Delete or Backspace deletes the selected element — a Connection alone, or a Node with its Connections; Escape deselects and blurs the active element
+- Ctrl+X cuts and Ctrl+C copies the selected Node or Group; Ctrl+V pastes at the cursor; Ctrl+D duplicates the selected Node or Group — no selection (or an empty Clipboard for paste) is a silent no-op
+
+## clipboard
+
+- the Clipboard is in-memory, single-entry, and session-scoped (ADR-0011): it holds the most recently Cut or Copied element and is lost on reload; the OS clipboard is never used for graph elements
+- Cut, Copy, and Duplicate apply to Nodes and Groups only — Connections offer no clipboard actions
+- copying a Group captures the Group, its children, and only Connections with BOTH endpoints inside the captured set; the snapshot is a deep clone isolated from later edits
+- Copy keeps the original selected and never touches History
+- Cut removes the captured set plus every touching Connection as one compound undo step — unlike Delete, cutting a Group removes its children instead of releasing them; undo restores original ids while the Clipboard keeps the copy
+- Paste regenerates all ids in the node_/conn_ patterns and remaps parentId and Connection endpoints; pasting the same entry twice yields two independent copies
+- menu Paste centers the copy on the right-click point; Paste on a Group's menu parents pasted regular nodes into that Group; a pasted Group never nests; Canvas paste strips parentId
+- the Paste menu item renders disabled while the Clipboard is empty (the menu shape stays stable)
+- Ctrl+V pastes centered on the tracked cursor position; repeated pastes without moving the mouse cascade by +24,+24 and moving the cursor resets the cascade
+- Duplicate (menu item or Ctrl+D) creates the copy at +24,+24 keeping the original's parentId (a sibling), as one undo step, without reading or writing the Clipboard
+- holding Alt at drag start spawns a duplicate that the drag moves — the original never moves and mid-drag Alt changes are ignored; drop membership follows the normal containment rule and the whole gesture is one undo step; without >2px movement the spawn is aborted
+- after Paste, Duplicate, or an Alt+drag drop the new copy is selected (the Group node when a Group was copied); Cut leaves nothing selected
 
 ## context menu
 
-- right-clicking opens a Context Menu scoped to its target: empty Canvas offers Add node and Add group; a Node offers Edit text and Delete; a Group offers Add node, Rename, and Delete; a Connection offers Edit text and Delete
+- right-clicking opens a Context Menu scoped to its target: empty Canvas offers Add node, Add group, and Paste; a Node offers Edit text, Cut, Copy, Duplicate, and Delete; a Group offers Add node, Rename, Cut, Copy, Paste, Duplicate, and Delete; a Connection offers Edit text and Delete
 - label: the Context Menu is built on @angular/cdk/menu CdkContextMenuTrigger and reuses the styled Helm dropdown-menu content; its logic lives in ContextMenuService, never in components
   command: grep -q 'CdkContextMenuTrigger' src/app/components/canvas/canvas.ts && grep -q 'ContextMenuService' src/app/services/context-menu.service.ts
 - right-clicking a target selects it before the menu opens (exclusive selection applies); right-clicking empty Canvas clears the selection and never starts a pan — panning is left-button only

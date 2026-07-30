@@ -1,6 +1,7 @@
 import { Injectable, inject, signal, computed } from '@angular/core';
 import { GraphService } from './graph.service';
 import { HistoryService } from './history.service';
+import { ClipboardService } from './clipboard.service';
 import { CreateNodeCommand, CreateGroupCommand, DeleteNodeCompoundCommand, DeleteConnectionCommand } from './commands';
 
 /** What a right-click landed on, and — for the empty Canvas — nothing more. */
@@ -20,6 +21,7 @@ const GROUP_OFFSET_Y = 100;
 export class ContextMenuService {
   private graphService = inject(GraphService);
   private historyService = inject(HistoryService);
+  private clipboardService = inject(ClipboardService);
 
   // The context the currently-open menu acts on, plus the canvas-coordinate
   // point of the right-click (where empty-Canvas creations are centered).
@@ -42,6 +44,9 @@ export class ContextMenuService {
     const t = this.target();
     return t?.kind === 'node' && this.isGroup(t.nodeId);
   });
+
+  // Drives the Paste item's disabled state — the menu shape stays stable
+  readonly canPaste = this.clipboardService.canPaste;
 
   /**
    * Prime the menu for a right-click: select the target first (mirroring
@@ -134,6 +139,46 @@ export class ContextMenuService {
       this.editTextRequest.set(target.nodeId);
     } else if (target?.kind === 'connection') {
       this.connectionTextRequest.set(target.connectionId);
+    }
+  }
+
+  // Clipboard actions apply to Nodes and Groups only — a Connection or the
+  // empty Canvas is a silent no-op, matching the shortcut convention.
+
+  /** Copy the target Node or Group onto the Clipboard. Never touches History. */
+  copyTarget(): void {
+    const target = this.target();
+    if (target?.kind === 'node') {
+      this.clipboardService.copy(target.nodeId);
+    }
+  }
+
+  /** Cut the target Node or Group: copy, then remove as one undo step. */
+  cutTarget(): void {
+    const target = this.target();
+    if (target?.kind === 'node') {
+      this.clipboardService.cut(target.nodeId);
+    }
+  }
+
+  /**
+   * Paste centered on the right-click point. On a Group target the pasted
+   * nodes become its children (mirroring "Add node"); on the Canvas they
+   * land parentless.
+   */
+  pasteHere(): void {
+    const target = this.target();
+    if (!target) return;
+    const parentGroupId =
+      target.kind === 'node' && this.isGroup(target.nodeId) ? target.nodeId : undefined;
+    this.clipboardService.pasteAt(this.pointX, this.pointY, parentGroupId);
+  }
+
+  /** Duplicate the target Node or Group at +24,+24 — Clipboard untouched. */
+  duplicateTarget(): void {
+    const target = this.target();
+    if (target?.kind === 'node') {
+      this.clipboardService.duplicate(target.nodeId);
     }
   }
 

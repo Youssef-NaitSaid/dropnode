@@ -2,6 +2,7 @@ import { Directive, inject, HostListener } from '@angular/core';
 import { GraphService } from '../services/graph.service';
 import { HistoryService } from '../services/history.service';
 import { SidebarService } from '../services/sidebar.service';
+import { ClipboardService } from '../services/clipboard.service';
 import { DeleteConnectionCommand, DeleteNodeCompoundCommand } from '../services/commands';
 
 @Directive({
@@ -12,6 +13,7 @@ export class KeyboardShortcuts {
   private graphService = inject(GraphService);
   private historyService = inject(HistoryService);
   private sidebarService = inject(SidebarService);
+  private clipboardService = inject(ClipboardService);
 
   @HostListener('document:keydown', ['$event'])
   onKeyDown(event: KeyboardEvent): void {
@@ -40,6 +42,48 @@ export class KeyboardShortcuts {
       event.preventDefault();
       this.historyService.undo();
       return;
+    }
+
+    // Clipboard shortcuts apply to the selected Node or Group only; no
+    // selection (or an empty Clipboard for paste) is a silent no-op
+    if (event.ctrlKey && !event.shiftKey && !event.altKey) {
+      const key = event.key.toLowerCase();
+      const selectedId = this.graphService.selectedNodeId();
+
+      // Ctrl+X: Cut the selected Node or Group
+      if (key === 'x') {
+        if (selectedId) {
+          event.preventDefault();
+          this.clipboardService.cut(selectedId);
+        }
+        return;
+      }
+
+      // Ctrl+C: Copy the selected Node or Group (never touches History)
+      if (key === 'c') {
+        if (selectedId) {
+          event.preventDefault();
+          this.clipboardService.copy(selectedId);
+        }
+        return;
+      }
+
+      // Ctrl+V: Paste at the cursor, cascading on repeat pastes
+      if (key === 'v') {
+        event.preventDefault();
+        this.clipboardService.pasteAtCursor();
+        return;
+      }
+
+      // Ctrl+D: Duplicate the selected Node or Group (Clipboard untouched);
+      // preventDefault suppresses the browser's bookmark dialog
+      if (key === 'd') {
+        event.preventDefault();
+        if (selectedId) {
+          this.clipboardService.duplicate(selectedId);
+        }
+        return;
+      }
     }
 
     // Delete/Backspace: delete whichever single element is selected
