@@ -7,7 +7,9 @@ import {
   effect,
   ElementRef,
 } from '@angular/core';
-import { Router, RouterLink, RouterLinkActive } from '@angular/router';
+import { Router, RouterLink, RouterLinkActive, NavigationEnd } from '@angular/router';
+import { toSignal } from '@angular/core/rxjs-interop';
+import { filter, map } from 'rxjs';
 import { NgIcon, provideIcons } from '@ng-icons/core';
 import {
   lucideWaypoints,
@@ -24,6 +26,7 @@ import {
   lucidePencil,
   lucideTrash2,
   lucideFileJson,
+  lucideFileDown,
   lucideCopy,
   lucideLink,
   lucideCloud,
@@ -51,6 +54,7 @@ import { SidebarService } from '../../services/sidebar.service';
 import { CollectionService } from '../../services/collection.service';
 import { ExportService } from '../../services/export.service';
 import { ImportDialogService } from '../../services/import-dialog.service';
+import { ExportDialogService } from '../../services/export-dialog.service';
 import { ToastService } from '../toast/toast';
 import { Collection, Project } from '../../models/collection';
 
@@ -98,6 +102,7 @@ type PendingDelete =
       lucidePencil,
       lucideTrash2,
       lucideFileJson,
+      lucideFileDown,
       lucideCopy,
       lucideLink,
       lucideCloud,
@@ -349,10 +354,18 @@ type PendingDelete =
                             </button>
                             <ng-template #exportSub>
                               <div hlmDropdownMenuSub class="w-56">
-                                <button hlmDropdownMenuItem (triggered)="exportService.exportProjectToFile(project.id)">
-                                  <ng-icon name="lucideFileJson" />
-                                  <span>Export JSON file</span>
-                                </button>
+                                @if (isOpenProject(project.id)) {
+                                  <!-- Only the on-screen graph can be snapshotted (ADR-0014) -->
+                                  <button hlmDropdownMenuItem (triggered)="openExportDialog(project.id)">
+                                    <ng-icon name="lucideFileDown" />
+                                    <span>Export as…</span>
+                                  </button>
+                                } @else {
+                                  <button hlmDropdownMenuItem (triggered)="exportService.exportProjectToFile(project.id)">
+                                    <ng-icon name="lucideFileJson" />
+                                    <span>Export JSON file</span>
+                                  </button>
+                                }
                                 <button hlmDropdownMenuItem (triggered)="exportService.copyProjectJson(project.id)">
                                   <ng-icon name="lucideCopy" />
                                   <span>Copy JSON</span>
@@ -426,8 +439,27 @@ export class SidebarComponent {
   protected readonly collectionService = inject(CollectionService);
   protected readonly exportService = inject(ExportService);
   private readonly importDialogService = inject(ImportDialogService);
+  private readonly exportDialogService = inject(ExportDialogService);
   private readonly toastService = inject(ToastService);
   private readonly router = inject(Router);
+
+  /** Current URL as a signal, so row menus track the open Project. */
+  private readonly currentUrl = toSignal(
+    this.router.events.pipe(
+      filter((e): e is NavigationEnd => e instanceof NavigationEnd),
+      map(e => e.urlAfterRedirects),
+    ),
+    { initialValue: this.router.url },
+  );
+
+  /** True when this Project is on screen — its row swaps in the PNG-capable dialog. */
+  protected isOpenProject(projectId: string): boolean {
+    return this.currentUrl().split('?')[0] === `/p/${projectId}`;
+  }
+
+  protected openExportDialog(projectId: string): void {
+    this.exportDialogService.requestOpen(projectId);
+  }
 
   protected readonly renamingId = signal<string | null>(null);
   protected readonly pendingDelete = signal<PendingDelete | null>(null);

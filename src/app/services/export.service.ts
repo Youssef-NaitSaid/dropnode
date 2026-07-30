@@ -1,7 +1,9 @@
 import { Injectable, inject } from '@angular/core';
 import { GraphService } from './graph.service';
 import { CollectionService } from './collection.service';
+import { ExportImageRenderer } from './export-image-renderer';
 import { GraphState } from '../models/graph-state';
+import { exportBounds, EXPORT_THEMES, ExportTheme } from '../models/export-image';
 import { ToastService } from '../components/toast/toast';
 
 @Injectable({ providedIn: 'root' })
@@ -9,6 +11,7 @@ export class ExportService {
   private graphService = inject(GraphService);
   private collectionService = inject(CollectionService);
   private toastService = inject(ToastService);
+  private imageRenderer = inject(ExportImageRenderer);
 
   private graphAsJson(graph?: GraphState): string {
     return JSON.stringify(graph ?? this.graphService.exportGraph(), null, 2);
@@ -24,7 +27,10 @@ export class ExportService {
   }
 
   private download(json: string, filename: string): void {
-    const blob = new Blob([json], { type: 'application/json' });
+    this.downloadBlob(new Blob([json], { type: 'application/json' }), filename);
+  }
+
+  private downloadBlob(blob: Blob, filename: string): void {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
@@ -35,8 +41,13 @@ export class ExportService {
 
   // ── Current editor graph (Scratch Canvas toolbar) ────────────────
 
-  exportToFile(): void {
-    this.download(this.graphAsJson(), 'dropnode-graph.json');
+  /**
+   * Downloads the live editor graph. A projectId only names the file after
+   * the Project — the payload is always the on-screen Graph State, so the
+   * dialog's preview and download never diverge (auto-save lags 300ms).
+   */
+  exportToFile(projectId?: string): void {
+    this.download(this.graphAsJson(), this.filenameBase(projectId) + '.json');
     this.toastService.show('Graph exported to file', 'success');
   }
 
@@ -46,6 +57,32 @@ export class ExportService {
 
   copyLink(): Promise<void> {
     return this.copyGraphLink(this.graphAsJson());
+  }
+
+  // ── PNG export (ADR-0014: snapshots the on-screen graph) ─────────
+
+  /** Real snapshot of the rendered graph — the preview and the download share this. */
+  renderPng(theme: ExportTheme): Promise<Blob> {
+    const nodes = this.graphService.nodes();
+    return this.imageRenderer.render(exportBounds(nodes), EXPORT_THEMES[theme], nodes);
+  }
+
+  /** Named after the Project when given its id, else the Scratch Canvas default. */
+  async exportPngToFile(theme: ExportTheme, projectId?: string): Promise<void> {
+    try {
+      const blob = await this.renderPng(theme);
+      this.downloadBlob(blob, this.filenameBase(projectId) + '.png');
+      this.toastService.show('Graph exported to file', 'success');
+    } catch {
+      this.toastService.show('Failed to export PNG', 'error');
+    }
+  }
+
+  /** dropnode-graph on the Scratch Canvas; the slugged Project name otherwise. */
+  private filenameBase(projectId?: string): string {
+    if (!projectId) return 'dropnode-graph';
+    const project = this.collectionService.getProject(projectId);
+    return this.slug(project?.name ?? '', 'project');
   }
 
   // ── Stored project graphs (Sidebar row actions, no navigation) ───

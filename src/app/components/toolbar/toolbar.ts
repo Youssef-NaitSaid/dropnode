@@ -10,7 +10,7 @@ import {
   lucideGroup,
   lucideUpload,
   lucideDownload,
-  lucideFileJson,
+  lucideFileDown,
   lucideCopy,
   lucideLink,
   lucideCloud,
@@ -32,6 +32,7 @@ import { HistoryService } from '../../services/history.service';
 import { ExportService } from '../../services/export.service';
 import { CollectionService } from '../../services/collection.service';
 import { ImportDialogService } from '../../services/import-dialog.service';
+import { ExportDialogService } from '../../services/export-dialog.service';
 import { CreateGroupCommand, SetNodeColorCommand, SetConnectionColorCommand, SetConnectionArrowheadCommand } from '../../services/commands';
 import { NODE_PALETTE } from '../../models/node';
 import { Connection, ArrowheadType, ArrowheadEnd, effectiveArrowhead } from '../../models/connection';
@@ -51,7 +52,7 @@ import { Connection, ArrowheadType, ArrowheadEnd, effectiveArrowhead } from '../
       lucideGroup,
       lucideUpload,
       lucideDownload,
-      lucideFileJson,
+      lucideFileDown,
       lucideCopy,
       lucideLink,
       lucideCloud,
@@ -186,9 +187,9 @@ import { Connection, ArrowheadType, ArrowheadEnd, effectiveArrowhead } from '../
 
     <ng-template #exportMenu>
       <div hlmDropdownMenu class="w-56">
-        <button hlmDropdownMenuItem (triggered)="exportToFile()">
-          <ng-icon name="lucideFileJson" />
-          <span>Export JSON file</span>
+        <button hlmDropdownMenuItem (triggered)="openExportDialog()">
+          <ng-icon name="lucideFileDown" />
+          <span>Export as…</span>
         </button>
         <button hlmDropdownMenuItem (triggered)="copyJson()">
           <ng-icon name="lucideCopy" />
@@ -283,6 +284,7 @@ export class ToolbarComponent {
   collectionService = inject(CollectionService);
   private exportService = inject(ExportService);
   private importDialogService = inject(ImportDialogService);
+  private exportDialogService = inject(ExportDialogService);
   private router = inject(Router);
 
   /** True on `/` — Import/Export/Save-as-project only exist for the Scratch Canvas. */
@@ -380,8 +382,9 @@ export class ToolbarComponent {
     this.router.navigate(['/p', project.id]);
   }
 
-  exportToFile(): void {
-    this.exportService.exportToFile();
+  /** File downloads (JSON and PNG) go through the "Export as…" dialog. */
+  openExportDialog(): void {
+    this.exportDialogService.requestOpen();
   }
 
   copyJson(): void {

@@ -2,14 +2,16 @@ import { Component, inject, ChangeDetectionStrategy, viewChild, effect } from '@
 import { RouterOutlet } from '@angular/router';
 import { ToastComponent } from '../toast/toast';
 import { ImportDialogComponent } from '../import-dialog/import-dialog';
+import { ExportDialogComponent } from '../export-dialog/export-dialog';
 import { SidebarComponent } from '../sidebar/sidebar';
 import { ImportDialogService } from '../../services/import-dialog.service';
+import { ExportDialogService } from '../../services/export-dialog.service';
 
 @Component({
   selector: 'app-shell',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [RouterOutlet, ToastComponent, ImportDialogComponent, SidebarComponent],
+  imports: [RouterOutlet, ToastComponent, ImportDialogComponent, ExportDialogComponent, SidebarComponent],
   template: `
     <div class="app-frame">
       <app-sidebar />
@@ -19,6 +21,7 @@ import { ImportDialogService } from '../../services/import-dialog.service';
     </div>
     <app-toast />
     <app-import-dialog #importDialog />
+    <app-export-dialog #exportDialog />
   `,
   styles: [`
     :host {
@@ -43,7 +46,9 @@ import { ImportDialogService } from '../../services/import-dialog.service';
 })
 export class AppShellComponent {
   private importDialogService = inject(ImportDialogService);
+  private exportDialogService = inject(ExportDialogService);
   private importDialog = viewChild<ImportDialogComponent>('importDialog');
+  private exportDialog = viewChild<ExportDialogComponent>('exportDialog');
 
   constructor() {
     // The toolbar (Scratch Canvas) and Sidebar Project rows both request the
@@ -51,6 +56,13 @@ export class AppShellComponent {
     effect(() => {
       if (this.importDialogService.openRequests() > 0) {
         this.importDialog()?.open();
+      }
+    });
+
+    // Same pattern for the "Export as…" dialog (toolbar + open Project's row).
+    effect(() => {
+      if (this.exportDialogService.openRequests() > 0) {
+        this.exportDialog()?.open(this.exportDialogService.projectId());
       }
     });
   }
