@@ -1,8 +1,11 @@
-import { Component, computed, effect, input, output, signal, viewChild, ChangeDetectionStrategy, ElementRef, inject } from '@angular/core';
+import { Component, computed, effect, input, output, signal, ChangeDetectionStrategy, inject } from '@angular/core';
 import { GraphNode, HandleSide } from '../../models/node';
 import { Connection } from '../../models/connection';
+import { Text, isTextEmpty } from '../../models/text';
 import { GraphService } from '../../services/graph.service';
 import { ContextMenuService } from '../../services/context-menu.service';
+import { TextViewComponent } from '../text-view/text-view';
+import { TextEditorComponent } from '../text-editor/text-editor';
 
 interface DragState {
   sourceNodeId: string;
@@ -17,6 +20,7 @@ interface DragState {
   selector: 'app-connection-layer',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
+  imports: [TextViewComponent, TextEditorComponent],
   template: `
     <svg class="connection-layer" [attr.width]="svgWidth()" [attr.height]="svgHeight()">
       @for (conn of connections(); track conn.id) {
@@ -38,33 +42,36 @@ interface DragState {
       }
     </svg>
 
-    <!-- Connection Labels are DOM pills (ADR-0001 hybrid: text in DOM, curves in SVG) -->
+    <!-- Connection Text renders as DOM cards (ADR-0001 hybrid: text in DOM, curves in SVG) -->
     <div class="label-layer">
       @for (conn of connections(); track conn.id) {
         @if (editingConnectionId() === conn.id) {
-          <input
-            #labelInput
-            class="connection-label-input"
+          <div
+            class="connection-text-card editing"
             [style.left.px]="getLabelMidpoint(conn).x"
             [style.top.px]="getLabelMidpoint(conn).y"
-            [value]="conn.label ?? ''"
-            (blur)="finishLabelEdit(conn, $event)"
-            (keydown.enter)="finishLabelEdit(conn, $event)"
-            (keydown.escape)="cancelLabelEdit()"
             (mousedown)="$event.stopPropagation()"
             (dblclick)="$event.stopPropagation()"
             (contextmenu)="$event.stopPropagation()"
-          />
-        } @else if (conn.label) {
+          >
+            <app-text-editor
+              [text]="conn.text ?? []"
+              (commit)="onTextEditorCommit(conn, $event)"
+              (cancelled)="cancelTextEdit()"
+            />
+          </div>
+        } @else if (conn.text) {
           <div
-            class="connection-label"
+            class="connection-text-card"
             [attr.data-connection-id]="conn.id"
             [class.selected]="isSelected(conn.id)"
             [style.left.px]="getLabelMidpoint(conn).x"
             [style.top.px]="getLabelMidpoint(conn).y"
             (mousedown)="onConnectionMouseDown(conn, $event)"
             (dblclick)="onConnectionDoubleClick(conn, $event)"
-          >{{ conn.label }}</div>
+          >
+            <app-text-view [text]="conn.text" />
+          </div>
         }
       }
     </div>
@@ -107,37 +114,33 @@ interface DragState {
       top: 0;
       left: 0;
     }
-    .connection-label {
+    .connection-text-card {
       position: absolute;
       transform: translate(-50%, -50%);
       background: #1c1c22;
       border: 1px solid rgba(124, 92, 255, 0.45);
-      border-radius: 999px;
-      padding: 2px 10px;
+      border-radius: 10px;
+      padding: 3px 10px;
       color: #e8e8ee;
       font-size: 12px;
       font-weight: 500;
-      white-space: nowrap;
+      max-width: 240px;
+      width: max-content;
+      text-align: center;
       cursor: pointer;
       user-select: none;
+      --tv-size-s: 10px;
+      --tv-size-l: 15px;
     }
-    .connection-label.selected {
+    .connection-text-card.selected {
       border-color: #7c5cff;
       box-shadow: 0 0 0 2px rgba(124, 92, 255, 0.4);
     }
-    .connection-label-input {
-      position: absolute;
-      transform: translate(-50%, -50%);
-      background: #1c1c22;
-      border: 1px solid #7c5cff;
-      border-radius: 999px;
-      padding: 2px 10px;
-      color: #e8e8ee;
-      font-size: 12px;
-      font-weight: 500;
-      outline: none;
-      width: 120px;
-      text-align: center;
+    .connection-text-card.editing {
+      border-color: #7c5cff;
+      width: 240px;
+      cursor: text;
+      user-select: text;
     }
   `],
 })
@@ -163,35 +166,25 @@ export class ConnectionLayerComponent {
 
   dragState = signal<DragState | null>(null);
 
-  // Connection whose label is being edited inline, if any
+  // Connection whose Text is being edited inline, if any
   editingConnectionId = signal<string | null>(null);
 
-  private labelInput = viewChild<ElementRef<HTMLInputElement>>('labelInput');
   private contextMenuService = inject(ContextMenuService);
 
   constructor() {
-    // autofocus doesn't fire for dynamically inserted inputs; focus and
-    // select the text once the editor renders
+    // The context menu's "Edit text" opens this Connection's inline editor
     effect(() => {
-      const input = this.labelInput()?.nativeElement;
-      if (input) {
-        input.focus();
-        input.select();
-      }
-    });
-
-    // The context menu's "Edit label" opens this Connection's inline editor
-    effect(() => {
-      const id = this.contextMenuService.editLabelRequest();
+      const id = this.contextMenuService.connectionTextRequest();
       if (id && this.connections().some(c => c.id === id)) {
         this.editingConnectionId.set(id);
-        this.contextMenuService.clearEditLabelRequest();
+        this.contextMenuService.clearConnectionTextRequest();
       }
     });
   }
 
   connectionSelect = output<string>();
-  labelCommit = output<{ connectionId: string; newLabel: string }>();
+  // null means the Text was cleared (committing empty removes it)
+  textCommit = output<{ connectionId: string; newText: Text | null }>();
 
   snapTarget = computed(() => {
     const state = this.dragState();
@@ -351,21 +344,20 @@ export class ConnectionLayerComponent {
     this.editingConnectionId.set(conn.id);
   }
 
-  finishLabelEdit(conn: Connection, event: Event): void {
-    // Enter commits and clears the editing flag; the input's follow-up blur lands here too
-    if (this.editingConnectionId() !== conn.id) return;
+  // Unlike Node Text, committing empty is meaningful: it removes the Text.
+  // The editor only emits when the content changed.
+  onTextEditorCommit(conn: Connection, newText: Text): void {
     this.editingConnectionId.set(null);
-    const input = event.target as HTMLInputElement;
-    const newLabel = input.value.trim();
-    const current = this.connections().find(c => c.id === conn.id);
-    if (!current) return;
-    // Unlike Node labels, committing empty is meaningful: it removes the label
-    if (newLabel !== (current.label ?? '')) {
-      this.labelCommit.emit({ connectionId: conn.id, newLabel });
-    }
+    const cleared = isTextEmpty(newText);
+    // Emptying an already-unlabeled Connection changes nothing — no Command
+    if (cleared && !conn.text) return;
+    this.textCommit.emit({
+      connectionId: conn.id,
+      newText: cleared ? null : newText,
+    });
   }
 
-  cancelLabelEdit(): void {
+  cancelTextEdit(): void {
     this.editingConnectionId.set(null);
   }
 }

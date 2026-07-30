@@ -3,6 +3,7 @@ import { GraphService } from './graph.service';
 import { GraphNode, HandleSide, NODE_PALETTE } from '../models/node';
 import { Connection } from '../models/connection';
 import { GraphState } from '../models/graph-state';
+import { Text, textFromString } from '../models/text';
 
 describe('GraphService', () => {
   let service: GraphService;
@@ -13,11 +14,12 @@ describe('GraphService', () => {
   });
 
   describe('createNode', () => {
-    it('creates a node with unique ID, correct label, position, and default dimensions', () => {
+    it('creates a node with unique ID, single-run Text, position, and default dimensions', () => {
       const node = service.createNode('Test Node', 100, 200);
 
       expect(node.id).toMatch(/^node_\d+_\d+$/);
-      expect(node.label).toBe('Test Node');
+      expect(node.text).toEqual([{ kind: 'paragraph', runs: [{ text: 'Test Node' }] }]);
+      expect(node.label).toBeUndefined();
       expect(node.x).toBe(100);
       expect(node.y).toBe(200);
       expect(node.width).toBe(160);
@@ -65,12 +67,32 @@ describe('GraphService', () => {
   });
 
   describe('updateNodeLabel', () => {
-    it('updates label text', () => {
-      const node = service.createNode('Old Label', 0, 0);
-      service.updateNodeLabel(node.id, 'New Label');
+    it('updates a Group Label', () => {
+      const group = service.createGroup('Old Label', 0, 0);
+      service.updateNodeLabel(group.id, 'New Label');
 
-      const updated = service.nodes().find(n => n.id === node.id);
+      const updated = service.nodes().find(n => n.id === group.id);
       expect(updated?.label).toBe('New Label');
+    });
+  });
+
+  describe('setNodeText', () => {
+    it('replaces the node Text', () => {
+      const node = service.createNode('Old', 0, 0);
+      const text: Text = [{ kind: 'paragraph', runs: [{ text: 'New', bold: true }] }];
+
+      service.setNodeText(node.id, text);
+
+      expect(service.nodes().find(n => n.id === node.id)?.text).toEqual(text);
+    });
+
+    it('does not affect other nodes', () => {
+      const a = service.createNode('A', 0, 0);
+      const b = service.createNode('B', 100, 0);
+
+      service.setNodeText(a.id, textFromString('changed'));
+
+      expect(service.nodes().find(n => n.id === b.id)?.text).toEqual(textFromString('B'));
     });
   });
 
@@ -209,26 +231,30 @@ describe('GraphService', () => {
     });
   });
 
-  describe('setConnectionLabel', () => {
-    it('sets a trimmed label on the connection', () => {
+  describe('setConnectionText', () => {
+    it('sets Text on the connection', () => {
       const node1 = service.createNode('Node 1', 0, 0);
       const node2 = service.createNode('Node 2', 300, 0);
       const conn = service.createConnection(node1.id, 'right', node2.id, 'left');
+      const text: Text = [{ kind: 'paragraph', runs: [{ text: 'depends on', italic: true }] }];
 
-      service.setConnectionLabel(conn!.id, '  depends on  ');
+      service.setConnectionText(conn!.id, text);
 
-      expect(service.connections()[0].label).toBe('depends on');
+      expect(service.connections()[0].text).toEqual(text);
     });
 
-    it('clears the label field when committing empty or whitespace', () => {
+    it('removes the text field when committing null or empty Text', () => {
       const node1 = service.createNode('Node 1', 0, 0);
       const node2 = service.createNode('Node 2', 300, 0);
       const conn = service.createConnection(node1.id, 'right', node2.id, 'left');
-      service.setConnectionLabel(conn!.id, 'depends on');
+      service.setConnectionText(conn!.id, textFromString('depends on'));
 
-      service.setConnectionLabel(conn!.id, '   ');
+      service.setConnectionText(conn!.id, null);
+      expect('text' in service.connections()[0]).toBe(false);
 
-      expect('label' in service.connections()[0]).toBe(false);
+      service.setConnectionText(conn!.id, textFromString('depends on'));
+      service.setConnectionText(conn!.id, [{ kind: 'paragraph', runs: [{ text: '   ' }] }]);
+      expect('text' in service.connections()[0]).toBe(false);
     });
 
     it('is a silent no-op for an unknown connection id', () => {
@@ -236,16 +262,16 @@ describe('GraphService', () => {
       const node2 = service.createNode('Node 2', 300, 0);
       service.createConnection(node1.id, 'right', node2.id, 'left');
 
-      expect(() => service.setConnectionLabel('nonexistent', 'x')).not.toThrow();
-      expect(service.connections()[0].label).toBeUndefined();
+      expect(() => service.setConnectionText('nonexistent', textFromString('x'))).not.toThrow();
+      expect(service.connections()[0].text).toBeUndefined();
     });
 
-    it('createConnection never sets a label', () => {
+    it('createConnection never sets Text', () => {
       const node1 = service.createNode('Node 1', 0, 0);
       const node2 = service.createNode('Node 2', 300, 0);
       const conn = service.createConnection(node1.id, 'right', node2.id, 'left');
 
-      expect('label' in conn!).toBe(false);
+      expect('text' in conn!).toBe(false);
     });
   });
 
@@ -492,13 +518,13 @@ describe('GraphService', () => {
       expect(result.error).toContain('missing or invalid id');
     });
 
-    it('node with missing label rejected', () => {
+    it('node with neither text nor legacy label rejected', () => {
       const result = service.importGraph({
         nodes: [{ id: 'n1', x: 0, y: 0, width: 160, height: 48 }],
         connections: [],
       } as any);
       expect(result.success).toBe(false);
-      expect(result.error).toContain('label must be a string');
+      expect(result.error).toBe('Invalid node n1: missing text');
     });
 
     it('node with non-number x/y rejected', () => {
@@ -561,7 +587,7 @@ describe('GraphService', () => {
       expect(result.error).toBe('Invalid connection c1: label must be a string');
     });
 
-    it('string and empty-string connection labels import cleanly', () => {
+    it('legacy string and empty-string connection labels migrate cleanly', () => {
       const result = service.importGraph({
         nodes: [
           { id: 'n1', label: 'Node 1', x: 0, y: 0, width: 160, height: 48 },
@@ -571,10 +597,10 @@ describe('GraphService', () => {
           { id: 'c1', sourceNodeId: 'n1', sourceHandle: 'right', targetNodeId: 'n2', targetHandle: 'left', label: 'depends on' },
           { id: 'c2', sourceNodeId: 'n2', sourceHandle: 'right', targetNodeId: 'n1', targetHandle: 'left', label: '' },
         ],
-      });
+      } as any);
       expect(result.success).toBe(true);
-      expect(service.connections()[0].label).toBe('depends on');
-      expect(service.connections()[1].label).toBe('');
+      expect(service.connections()[0].text).toEqual(textFromString('depends on'));
+      expect('text' in service.connections()[1]).toBe(false);
     });
 
     it('empty graph (no nodes, no connections) is valid', () => {
@@ -602,25 +628,143 @@ describe('GraphService', () => {
     });
 
     it('exported graph is a deep copy', () => {
-      const node = service.createNode('Test', 0, 0);
+      service.createNode('Test', 0, 0);
       const exported = service.exportGraph();
 
-      exported.nodes[0].label = 'Modified';
-      expect(service.nodes()[0].label).toBe('Test');
+      exported.nodes[0].text!.push({ kind: 'paragraph', runs: [{ text: 'Injected' }] });
+      expect(service.nodes()[0].text).toEqual(textFromString('Test'));
     });
 
-    it('Connection Labels survive an export/import round trip', () => {
+    it('Connection Text survives an export/import round trip', () => {
       const node1 = service.createNode('Node 1', 0, 0);
       const node2 = service.createNode('Node 2', 300, 0);
       const conn = service.createConnection(node1.id, 'right', node2.id, 'left');
-      service.setConnectionLabel(conn!.id, 'depends on');
+      const text: Text = [
+        { kind: 'paragraph', runs: [{ text: 'depends ', bold: true }, { text: 'on' }] },
+        { kind: 'bullets', items: [[{ text: 'x', size: 'S' }]] },
+      ];
+      service.setConnectionText(conn!.id, text);
 
       const exported = service.exportGraph();
       service.clearGraph();
       const result = service.importGraph(exported);
 
       expect(result.success).toBe(true);
-      expect(service.connections()[0].label).toBe('depends on');
+      expect(service.connections()[0].text).toEqual(text);
+    });
+  });
+
+  describe('import migration and Text validation', () => {
+    const nodes = (...ns: Record<string, unknown>[]) => ({ nodes: ns, connections: [] }) as any;
+    const textNode = (over: Record<string, unknown>) => ({
+      id: 'n1', text: textFromString('N'), x: 0, y: 0, width: 160, height: 48, ...over,
+    });
+
+    it('migrates a legacy plain-string node label into single-run Text', () => {
+      const result = service.importGraph(nodes(
+        { id: 'n1', label: 'Legacy', x: 0, y: 0, width: 160, height: 48 },
+      ));
+
+      expect(result.success).toBe(true);
+      const node = service.nodes()[0];
+      expect(node.text).toEqual(textFromString('Legacy'));
+      expect('label' in node).toBe(false);
+    });
+
+    it('keeps Group labels plain and unmigrated', () => {
+      const result = service.importGraph(nodes(
+        { id: 'g', label: 'My Group', x: 0, y: 0, width: 320, height: 200, kind: 'group' },
+      ));
+
+      expect(result.success).toBe(true);
+      expect(service.nodes()[0].label).toBe('My Group');
+      expect('text' in service.nodes()[0]).toBe(false);
+    });
+
+    it('accepts a node carrying structured Text with every format', () => {
+      const text: Text = [
+        {
+          kind: 'paragraph',
+          runs: [
+            { text: 'a', bold: true, italic: true, highlight: true },
+            { text: 'b', link: 'https://x.io', size: 'L' },
+          ],
+        },
+        { kind: 'bullets', items: [[{ text: 'c', size: 'S' }]] },
+      ];
+      const result = service.importGraph(nodes(textNode({ text })));
+
+      expect(result.success).toBe(true);
+      expect(service.nodes()[0].text).toEqual(text);
+    });
+
+    it('prefers text over a leftover legacy label on the same node', () => {
+      const result = service.importGraph(nodes(
+        textNode({ text: textFromString('New'), label: 'Old' }),
+      ));
+
+      expect(result.success).toBe(true);
+      expect(service.nodes()[0].text).toEqual(textFromString('New'));
+      expect('label' in service.nodes()[0]).toBe(false);
+    });
+
+    it('rejects malformed node Text wholesale with a specific error', () => {
+      expect(service.importGraph(nodes(textNode({ text: 'plain' }))).error)
+        .toBe('Invalid node n1: text must be an array of blocks');
+      expect(service.importGraph(nodes(textNode({
+        text: [{ kind: 'paragraph', runs: [{ text: 'x', underline: true }] }],
+      }))).error).toBe("Invalid node n1: unknown run key 'underline'");
+      expect(service.importGraph(nodes(textNode({
+        text: [{ kind: 'paragraph', runs: [{ text: 'x', size: 'M' }] }],
+      }))).error).toBe("Invalid node n1: run size must be 'S' or 'L'");
+      expect(service.importGraph(nodes(textNode({
+        text: [{ kind: 'paragraph', runs: [{ text: 'x', link: 'javascript:alert(1)' }] }],
+      }))).error).toBe('Invalid node n1: run link must be an http(s) URL');
+    });
+
+    it('rejects a Group carrying Text', () => {
+      const result = service.importGraph(nodes({
+        id: 'g', label: 'G', text: textFromString('nope'),
+        x: 0, y: 0, width: 320, height: 200, kind: 'group',
+      }));
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('Invalid node g: a Group cannot carry text');
+    });
+
+    it('rejects a Group without a plain label', () => {
+      const result = service.importGraph(nodes({
+        id: 'g', x: 0, y: 0, width: 320, height: 200, kind: 'group',
+      }));
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('Invalid node g: label must be a string');
+    });
+
+    it('rejects malformed connection Text wholesale', () => {
+      const result = service.importGraph({
+        nodes: [
+          textNode({}),
+          textNode({ id: 'n2', x: 200 }),
+        ],
+        connections: [
+          {
+            id: 'c1', sourceNodeId: 'n1', sourceHandle: 'right', targetNodeId: 'n2', targetHandle: 'left',
+            text: [{ kind: 'heading', runs: [] }],
+          },
+        ],
+      } as any);
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBe("Invalid connection c1: block kind must be 'paragraph' or 'bullets'");
+    });
+
+    it('existing state stays untouched when Text validation rejects a payload', () => {
+      const keep = service.createNode('Keep', 0, 0);
+
+      service.importGraph(nodes(textNode({ text: 'bad' })));
+
+      expect(service.nodes().map(n => n.id)).toEqual([keep.id]);
     });
   });
 

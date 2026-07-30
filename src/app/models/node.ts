@@ -1,3 +1,5 @@
+import { Text } from './text';
+
 export type HandleSide = 'top' | 'right' | 'bottom' | 'left';
 
 // Curated background palette, retuned for the refined-dark canvas: light,
@@ -10,7 +12,10 @@ export const NODE_PALETTE: readonly string[] = [
 
 export interface GraphNode {
   id: string;
-  label: string;
+  // Text carried by a regular node (required for regular nodes; never on Groups)
+  text?: Text;
+  // Plain Label of a Group (required for Groups; never on regular nodes)
+  label?: string;
   x: number;
   y: number;
   width: number;

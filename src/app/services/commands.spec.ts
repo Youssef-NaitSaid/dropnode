@@ -1,6 +1,7 @@
 import { TestBed } from '@angular/core/testing';
 import { GraphService } from './graph.service';
 import { NODE_PALETTE } from '../models/node';
+import { Text, textFromString } from '../models/text';
 import {
   CreateNodeCommand,
   MoveNodeCommand,
@@ -14,7 +15,8 @@ import {
   ResizeNodeCommand,
   SetNodeColorCommand,
   CompoundCommand,
-  SetConnectionLabelCommand,
+  SetNodeTextCommand,
+  SetConnectionTextCommand,
 } from './commands';
 
 describe('Commands', () => {
@@ -34,7 +36,7 @@ describe('Commands', () => {
 
       expect(graphService.nodes().length).toBe(1);
       const node = graphService.nodes()[0];
-      expect(node.label).toBe('Test Node');
+      expect(node.text).toEqual(textFromString('Test Node'));
       expect(node.x).toBe(100);
       expect(node.y).toBe(200);
     });
@@ -57,7 +59,7 @@ describe('Commands', () => {
       cmd.execute();
       const node = cmd.getNode();
       expect(node).not.toBeNull();
-      expect(node!.label).toBe('Test');
+      expect(node!.text).toEqual(textFromString('Test'));
     });
   });
 
@@ -98,23 +100,61 @@ describe('Commands', () => {
   });
 
   describe('RenameNodeCommand', () => {
-    it('execute renames node', () => {
-      const node = graphService.createNode('Old Label', 0, 0);
-      const cmd = new RenameNodeCommand(graphService, node.id, 'New Label');
+    it('execute renames a Group Label', () => {
+      const group = graphService.createGroup('Old Label', 0, 0);
+      const cmd = new RenameNodeCommand(graphService, group.id, 'New Label');
 
       cmd.execute();
-      expect(graphService.nodes().find(n => n.id === node.id)?.label).toBe('New Label');
+      expect(graphService.nodes().find(n => n.id === group.id)?.label).toBe('New Label');
     });
 
-    it('undo restores original label', () => {
-      const node = graphService.createNode('Original', 0, 0);
-      const cmd = new RenameNodeCommand(graphService, node.id, 'Modified');
+    it('undo restores original Group Label', () => {
+      const group = graphService.createGroup('Original', 0, 0);
+      const cmd = new RenameNodeCommand(graphService, group.id, 'Modified');
 
       cmd.execute();
-      expect(graphService.nodes().find(n => n.id === node.id)?.label).toBe('Modified');
+      expect(graphService.nodes().find(n => n.id === group.id)?.label).toBe('Modified');
 
       cmd.undo();
-      expect(graphService.nodes().find(n => n.id === node.id)?.label).toBe('Original');
+      expect(graphService.nodes().find(n => n.id === group.id)?.label).toBe('Original');
+    });
+  });
+
+  describe('SetNodeTextCommand', () => {
+    const richText: Text = [
+      { kind: 'paragraph', runs: [{ text: 'Title', size: 'L' }] },
+      { kind: 'bullets', items: [[{ text: 'a', bold: true }], [{ text: 'b' }]] },
+    ];
+
+    it('execute replaces the node Text', () => {
+      const node = graphService.createNode('Old', 0, 0);
+      const cmd = new SetNodeTextCommand(graphService, node.id, richText);
+
+      cmd.execute();
+      expect(graphService.nodes().find(n => n.id === node.id)?.text).toEqual(richText);
+    });
+
+    it('undo restores the exact previous Text including formatting', () => {
+      const node = graphService.createNode('N', 0, 0);
+      const original: Text = [{ kind: 'paragraph', runs: [{ text: 'keep', highlight: true }] }];
+      graphService.setNodeText(node.id, original);
+
+      const cmd = new SetNodeTextCommand(graphService, node.id, richText);
+      cmd.execute();
+      cmd.undo();
+
+      expect(graphService.nodes().find(n => n.id === node.id)?.text).toEqual(original);
+    });
+
+    it('redo (execute after undo) re-applies the new Text', () => {
+      const node = graphService.createNode('N', 0, 0);
+      const cmd = new SetNodeTextCommand(graphService, node.id, richText);
+
+      cmd.execute();
+      cmd.undo();
+      cmd.execute();
+
+      expect(graphService.nodes().find(n => n.id === node.id)?.text).toEqual(richText);
     });
   });
 
@@ -150,7 +190,7 @@ describe('Commands', () => {
       expect(graphService.connections().length).toBe(1);
 
       const restored = graphService.nodes().find(n => n.id === node1.id);
-      expect(restored?.label).toBe('Node 1');
+      expect(restored?.text).toEqual(textFromString('Node 1'));
       expect(restored?.x).toBe(0);
       expect(restored?.y).toBe(0);
     });
@@ -228,84 +268,87 @@ describe('Commands', () => {
       expect(restored.targetNodeId).toBe(node2.id);
     });
 
-    it('undo preserves the Connection Label', () => {
+    it('undo preserves the Connection Text', () => {
       const node1 = graphService.createNode('Node 1', 0, 0);
       const node2 = graphService.createNode('Node 2', 100, 0);
       const conn = graphService.createConnection(node1.id, 'right', node2.id, 'left');
-      graphService.setConnectionLabel(conn!.id, 'depends on');
+      graphService.setConnectionText(conn!.id, textFromString('depends on'));
 
       const cmd = new DeleteConnectionCommand(graphService, conn!.id);
       cmd.execute();
       cmd.undo();
 
-      expect(graphService.connections()[0].label).toBe('depends on');
+      expect(graphService.connections()[0].text).toEqual(textFromString('depends on'));
     });
   });
 
-  describe('SetConnectionLabelCommand', () => {
-    it('execute sets the label', () => {
+  describe('SetConnectionTextCommand', () => {
+    const richText: Text = [{ kind: 'paragraph', runs: [{ text: 'new', italic: true }] }];
+
+    it('execute sets the Text', () => {
       const node1 = graphService.createNode('Node 1', 0, 0);
       const node2 = graphService.createNode('Node 2', 100, 0);
       const conn = graphService.createConnection(node1.id, 'right', node2.id, 'left');
 
-      const cmd = new SetConnectionLabelCommand(graphService, conn!.id, 'depends on');
+      const cmd = new SetConnectionTextCommand(graphService, conn!.id, richText);
       cmd.execute();
 
-      expect(graphService.connections()[0].label).toBe('depends on');
+      expect(graphService.connections()[0].text).toEqual(richText);
     });
 
-    it('undo restores the exact previous label', () => {
+    it('undo restores the exact previous Text', () => {
       const node1 = graphService.createNode('Node 1', 0, 0);
       const node2 = graphService.createNode('Node 2', 100, 0);
       const conn = graphService.createConnection(node1.id, 'right', node2.id, 'left');
-      graphService.setConnectionLabel(conn!.id, 'old label');
+      const original: Text = [{ kind: 'paragraph', runs: [{ text: 'old', bold: true }] }];
+      graphService.setConnectionText(conn!.id, original);
 
-      const cmd = new SetConnectionLabelCommand(graphService, conn!.id, 'new label');
+      const cmd = new SetConnectionTextCommand(graphService, conn!.id, richText);
       cmd.execute();
-      expect(graphService.connections()[0].label).toBe('new label');
+      expect(graphService.connections()[0].text).toEqual(richText);
 
       cmd.undo();
-      expect(graphService.connections()[0].label).toBe('old label');
+      expect(graphService.connections()[0].text).toEqual(original);
     });
 
-    it('undo restores "no label" when the Connection had none', () => {
+    it('undo restores "no Text" when the Connection had none', () => {
       const node1 = graphService.createNode('Node 1', 0, 0);
       const node2 = graphService.createNode('Node 2', 100, 0);
       const conn = graphService.createConnection(node1.id, 'right', node2.id, 'left');
 
-      const cmd = new SetConnectionLabelCommand(graphService, conn!.id, 'depends on');
+      const cmd = new SetConnectionTextCommand(graphService, conn!.id, richText);
       cmd.execute();
       cmd.undo();
 
-      expect('label' in graphService.connections()[0]).toBe(false);
+      expect('text' in graphService.connections()[0]).toBe(false);
     });
 
-    it('redo (execute after undo) re-applies the label', () => {
+    it('redo (execute after undo) re-applies the Text', () => {
       const node1 = graphService.createNode('Node 1', 0, 0);
       const node2 = graphService.createNode('Node 2', 100, 0);
       const conn = graphService.createConnection(node1.id, 'right', node2.id, 'left');
-      graphService.setConnectionLabel(conn!.id, 'old label');
+      graphService.setConnectionText(conn!.id, textFromString('old'));
 
-      const cmd = new SetConnectionLabelCommand(graphService, conn!.id, 'new label');
+      const cmd = new SetConnectionTextCommand(graphService, conn!.id, richText);
       cmd.execute();
       cmd.undo();
       cmd.execute();
 
-      expect(graphService.connections()[0].label).toBe('new label');
+      expect(graphService.connections()[0].text).toEqual(richText);
     });
 
-    it('execute with empty text removes the label; undo restores it', () => {
+    it('execute with null removes the Text; undo restores it', () => {
       const node1 = graphService.createNode('Node 1', 0, 0);
       const node2 = graphService.createNode('Node 2', 100, 0);
       const conn = graphService.createConnection(node1.id, 'right', node2.id, 'left');
-      graphService.setConnectionLabel(conn!.id, 'depends on');
+      graphService.setConnectionText(conn!.id, textFromString('depends on'));
 
-      const cmd = new SetConnectionLabelCommand(graphService, conn!.id, '');
+      const cmd = new SetConnectionTextCommand(graphService, conn!.id, null);
       cmd.execute();
-      expect('label' in graphService.connections()[0]).toBe(false);
+      expect('text' in graphService.connections()[0]).toBe(false);
 
       cmd.undo();
-      expect(graphService.connections()[0].label).toBe('depends on');
+      expect(graphService.connections()[0].text).toEqual(textFromString('depends on'));
     });
   });
 
@@ -388,7 +431,9 @@ describe('Commands', () => {
       const cmd = new CreateNodeCommand(graphService, 'Child', 50, 50, group.id);
 
       cmd.execute();
-      const child = graphService.nodes().find(n => n.label === 'Child');
+      const child = graphService.nodes().find(n => n.parentId === group.id);
+      expect(child).toBeDefined();
+      expect(child?.text).toEqual(textFromString('Child'));
       expect(child?.parentId).toBe(group.id);
 
       cmd.undo();

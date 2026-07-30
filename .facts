@@ -2,7 +2,9 @@
 
 ## domain
 
-- a Node is a labeled rectangle on the Canvas with a unique id, a position, and dimensions; its label content dictates a minimum width (GraphNode in code)
+- a Node is a rectangle on the Canvas carrying Text, with a unique id, a position, and dimensions; its Text dictates a minimum size (GraphNode in code)
+- Text is the formattable content of a Node (required) or Connection (optional): blocks of styled runs supporting bold, italic, highlight, link, font size S/M/L, and bulleted lists (ADR-0009)
+- Formatting is applied via the Formatting Toolbar shown while editing Text; Groups carry a plain single-line Label instead of Text
 - a Group is a distinct kind of node (kind 'group') that visually and logically contains child nodes via their parentId; nesting is one level deep — a Group never contains another Group
 - a Connection is a directed curve linking a Handle on a source Node to a Handle on a target Node, identified by its four endpoint fields
 - a Handle is a connection anchor on one of the four edges of a Node (top, right, bottom, left); its position is derived from the Node's rect
@@ -18,16 +20,32 @@
 - all Graph State lives in GraphService signals; components mutate it only through the service, transient drags directly and undoable actions via Commands
 - Import replaces the Graph State wholesale after validation; Export serializes it to JSON
 
+## text
+
+- label: Text is stored in a library-neutral wire format: blocks of kind 'paragraph' (runs) or 'bullets' (items of runs); a run carries text plus optional bold/italic/highlight (literally true), link (http(s) only), and size ('S' or 'L' — absent means M)
+  command: grep -q "kind: 'paragraph'" src/app/models/text.ts
+- label: the Text editor is ProseMirror with a schema locked to exactly the supported formats; a pure converter maps PM doc JSON to Text at the editor boundary and PM never leaks into Graph State (ADR-0010)
+  command: grep -q 'prosemirror-model' src/app/components/text-editor/text-schema.ts && grep -q 'docToText' src/app/components/text-editor/text-doc.ts
+- inside the Text editor Enter inserts a new line (or next bullet in a list); blur or Ctrl+Enter commits, Escape cancels
+- while editing, Ctrl+Z/Ctrl+Y are ProseMirror-internal; a whole edit session commits as one SetNodeTextCommand or SetConnectionTextCommand and unchanged content pushes nothing onto History
+- the Formatting Toolbar shows for the entire edit session, floating above the target (flipping below when clipped at the viewport top); toggle buttons reflect the selection state and clicking them never blurs the edit
+- the Link control opens an inline URL input in the toolbar; entered URLs without a scheme are normalized to https://
+- font sizes render as Node S/M/L = 11/14/18 px and Connection S/M/L = 10/12/15 px; M matches the pre-Text rendering exactly
+- Highlight renders as a yellow marker behind the text; links render underlined and Ctrl+Click opens them in a new tab (noopener) — plain click keeps select/drag
+- pasted rich content keeps what maps to the supported formats and silently strips everything else (schema-driven)
+- display-mode Text renders via plain Angular templates from the structured JSON — no innerHTML, no sanitizer
+- committing empty Text on a Node reverts to the previous Text; committing empty Text on a Connection removes it (deliberate asymmetry, mirroring the old label rules)
+
 ## nodes
 
-- double-clicking empty Canvas creates a Node labeled "New Node" centered on the cursor, as a single undo step
-- new Nodes default to 160x48; after render the measured label width (120px floor) raises the Node's width but never shrinks it — manual sizes are grow-only protected
+- double-clicking empty Canvas creates a Node with Text "New Node" centered on the cursor, as a single undo step
+- new Nodes default to 160x48; Text wraps at the Node's width, and after render the measured content raises the width floor (widest unbreakable line, 120px minimum) and height (48px minimum) but never shrinks — manual sizes are grow-only protected
 - Node auto-sizing updates go directly to GraphService and never create a History entry
 - four Resize Grips show at the corners of the selected node only; dragging one resizes with the opposite corner anchored
-- a grip drag clamps width to the label-derived minimum (max of 120 and the measured label width) and height to 48
+- a grip drag clamps width and height to the Text-derived minimums (floors 120 and 48)
 - an entire grip drag is one undo step: per-mousemove size updates bypass History, and a single ResizeNodeCommand is pushed on mouseup only if the rect changed more than 2px
-- double-clicking a Node opens inline label editing with the text focused and selected; Enter or blur commits, Escape cancels; empty or unchanged labels are never committed
-- renaming a Node is undoable and restores the exact previous label
+- double-clicking a Node opens the Text editor with the content focused and selected; blur or Ctrl+Enter commits, Escape cancels; empty or unchanged Text is never committed
+- setting a Node's Text is undoable and restores the exact previous Text including formatting
 - deleting an unknown Node id throws "Node {id} not found"; deleting an unknown Connection id is a silent no-op
 - Node ids follow the pattern node_{timestamp}_{counter} and Connection ids conn_{timestamp}_{counter}; the counter is monotonic within a session
 
@@ -61,11 +79,11 @@
 - the source Node's own Handles are never snap targets during a connection drag
 - dropping a connection drag in empty space (no snap) creates nothing
 - during a connection drag a dashed ghost bezier renders from the source Handle to the cursor
-- clicking a Connection path or its Label selects the Connection; Delete or Backspace deletes the selected Connection as one undoable Command
+- clicking a Connection path or its Text card selects the Connection; Delete or Backspace deletes the selected Connection as one undoable Command
 - selection is exclusive: at most one element (Node or Connection) is selected at a time — selecting one kind deselects the other, and clicking empty Canvas or pressing Escape clears whichever is selected
-- a Connection carries an optional Label; double-clicking the path or Label opens inline editing at the curve midpoint with the text focused and selected — Enter or blur commits, Escape cancels, and committing empty removes the Label (deliberate deviation from the Node rule)
-- setting or clearing a Connection Label is one undoable SetConnectionLabelCommand; committing unchanged text pushes nothing onto History; createConnection never sets a label
-- a Connection Label renders as horizontal text on an opaque pill centered at the cubic bezier midpoint, moving with the curve; the pill is part of the Connection's hit area
+- a Connection carries optional Text; double-clicking the path or Text card opens the Text editor at the curve midpoint with the content focused and selected — blur or Ctrl+Enter commits, Escape cancels, and committing empty removes the Text (deliberate deviation from the Node rule)
+- setting or clearing Connection Text is one undoable SetConnectionTextCommand; committing unchanged content pushes nothing onto History; createConnection never sets Text
+- Connection Text renders on an opaque wrapping card (max-width 240px) centered at the cubic bezier midpoint, moving with the curve; the card is part of the Connection's hit area
 - Connections render as cubic beziers; control points extend perpendicular to each Handle's edge, offset clamped between 40 and 150 (distance x 0.4)
 - Handle positions are the midpoints of the Node's four edges, computed from x, y, width, height
 
@@ -96,7 +114,8 @@
 - Import validation also rejects kind values other than 'group', off-palette colors, parentId values that reference a missing node or a non-Group, Groups carrying a parentId, and Connections linking a Group to its own child
 - payloads without kind, parentId, or color import unchanged as plain nodes — pre-Group exports and links stay valid
 - Import validation does NOT reject duplicate Connection ids or self-connections — only createConnection guards those
-- a Connection label field, when present, must be a string or the payload is rejected with "Invalid connection {id}: label must be a string"; empty-string labels import cleanly and render as no Label, and payloads without label fields import unchanged
+- Import whitelists Text wholesale: unknown block kinds or run keys, non-true format flags, sizes outside S/L, and non-http(s) links are rejected with "Invalid node {id}: {reason}" or "Invalid connection {id}: {reason}"; a Group carrying text is rejected, and a Group without a string label is rejected
+- legacy payloads with plain-string labels migrate on import: a regular node's or connection's label becomes single-run Text (empty connection labels drop the field) — old exports and ?data links stay valid; Export always writes the new text shape
 - label: the Export menu offers four items — Export JSON file, Copy JSON, Copy link, and a disabled Export to Drive placeholder hinting "Sign in required — coming soon"; it opens from the Scratch Canvas toolbar and from each project row's Export submenu in the Sidebar
   command: grep -q 'Export to Drive' src/app/components/toolbar/toolbar.ts && grep -q 'Export to Drive' src/app/components/sidebar/sidebar.ts
 - label: Export downloads pretty-printed 2-space JSON named dropnode-graph.json with a success toast; Copy JSON copies the same JSON to the clipboard with a success/error toast
@@ -140,14 +159,14 @@
 
 ## context menu
 
-- right-clicking opens a Context Menu scoped to its target: empty Canvas offers Add node and Add group; a Node offers Rename and Delete; a Group offers Add node, Rename, and Delete; a Connection offers Edit label and Delete
+- right-clicking opens a Context Menu scoped to its target: empty Canvas offers Add node and Add group; a Node offers Edit text and Delete; a Group offers Add node, Rename, and Delete; a Connection offers Edit text and Delete
 - label: the Context Menu is built on @angular/cdk/menu CdkContextMenuTrigger and reuses the styled Helm dropdown-menu content; its logic lives in ContextMenuService, never in components
   command: grep -q 'CdkContextMenuTrigger' src/app/components/canvas/canvas.ts && grep -q 'ContextMenuService' src/app/services/context-menu.service.ts
 - right-clicking a target selects it before the menu opens (exclusive selection applies); right-clicking empty Canvas clears the selection and never starts a pan — panning is left-button only
 - Add node and Add group create centered on the right-click point (Node offset 60/24, Group offset 160/100); Add node on a Group creates a child of that Group at the point
-- menu Rename opens the target Node or Group's existing inline label editor; Edit label opens the Connection's midpoint Label editor — both reuse the double-click editors and their commit rules
+- menu Edit text opens the target Node's or Connection's Text editor; menu Rename opens a Group's inline Label editor — all reuse the double-click editors and their commit rules
 - menu Delete runs the same Commands as the Delete/Backspace shortcut, with identical cascade and undo behavior; opening or dismissing a menu never touches History
-- the native browser context menu is suppressed on the Canvas, Nodes, Groups, and Connections, but preserved inside inline text inputs (label editors stop propagation of the contextmenu event)
+- the native browser context menu is suppressed on the Canvas, Nodes, Groups, and Connections, but preserved inside the Text editor and Group Label input (both stop propagation of the contextmenu event)
 
 ## ui
 

@@ -3,6 +3,7 @@ import { GraphNode, HandleSide, NODE_PALETTE } from '../models/node';
 import { Connection } from '../models/connection';
 import { GraphState } from '../models/graph-state';
 import { ViewportState } from '../models/viewport-state';
+import { Text, textFromString, isTextEmpty, validateText, canonicalizeText } from '../models/text';
 
 @Injectable({ providedIn: 'root' })
 export class GraphService {
@@ -30,10 +31,10 @@ export class GraphService {
   }
 
   // Node operations
-  createNode(label: string, x: number, y: number, width = 160, height = 48): GraphNode {
+  createNode(text: string, x: number, y: number, width = 160, height = 48): GraphNode {
     const node: GraphNode = {
       id: this.generateId('node'),
-      label,
+      text: textFromString(text),
       x,
       y,
       width,
@@ -171,9 +172,16 @@ export class GraphService {
     );
   }
 
+  // Group Label only — regular nodes carry Text, set via setNodeText
   updateNodeLabel(id: string, label: string): void {
     this.nodes.update(nodes =>
       nodes.map(n => n.id === id ? { ...n, label } : n)
+    );
+  }
+
+  setNodeText(id: string, text: Text): void {
+    this.nodes.update(nodes =>
+      nodes.map(n => n.id === id ? { ...n, text } : n)
     );
   }
 
@@ -254,17 +262,17 @@ export class GraphService {
     return conn;
   }
 
-  // Connection Label: trimmed; empty or whitespace clears the field entirely
-  setConnectionLabel(id: string, label: string): void {
-    const trimmed = label.trim();
+  // Connection Text: committing null or an empty Text removes the field entirely
+  setConnectionText(id: string, text: Text | null): void {
+    const cleared = text === null || isTextEmpty(text);
     this.connections.update(conns =>
       conns.map(c => {
         if (c.id !== id) return c;
-        if (trimmed === '') {
-          const { label: _removed, ...rest } = c;
+        if (cleared) {
+          const { text: _removed, ...rest } = c;
           return rest;
         }
-        return { ...c, label: trimmed };
+        return { ...c, text: text! };
       })
     );
   }
@@ -325,18 +333,37 @@ export class GraphService {
       return { success: false, error: validation.error };
     }
 
-    this.nodes.set([...state.nodes]);
-    this.connections.set([...state.connections]);
+    this.nodes.set(state.nodes.map(n => this.migrateNode(n)));
+    this.connections.set(state.connections.map(c => this.migrateConnection(c)));
     this.selectedNodeId.set(null);
     this.selectedConnectionId.set(null);
     return { success: true };
   }
 
+  // Legacy payloads carry plain-string labels on regular nodes/connections;
+  // they migrate into single-run Text on import (ADR-0009). Groups keep label.
+  // Text is canonicalized so imported key order can't spoof a later change.
+  private migrateNode(node: GraphNode): GraphNode {
+    if (node.kind === 'group') return { ...node };
+    const { label, ...rest } = node as GraphNode & { label?: string };
+    return { ...rest, text: node.text ? canonicalizeText(node.text) : textFromString(label ?? '') };
+  }
+
+  private migrateConnection(conn: Connection): Connection {
+    const { label, ...rest } = conn as Connection & { label?: string };
+    if (conn.text) return { ...rest, text: canonicalizeText(conn.text) };
+    if (label !== undefined && label.trim() !== '') {
+      return { ...rest, text: textFromString(label) };
+    }
+    return rest;
+  }
+
   exportGraph(): GraphState {
-    return {
-      nodes: this.nodes().map(n => ({ ...n })),
-      connections: this.connections().map(c => ({ ...c })),
-    };
+    // Deep copy: Text blocks are nested arrays, a shallow copy would alias them
+    return structuredClone({
+      nodes: this.nodes(),
+      connections: this.connections(),
+    });
   }
 
   // Public so collection import can validate each project's graph with the
@@ -372,8 +399,27 @@ export class GraphService {
       if (nodeIds.has(nodeId)) {
         return { valid: false, error: `Duplicate node id: ${nodeId}` };
       }
-      if (typeof node['label'] !== 'string') {
-        return { valid: false, error: `Invalid node ${nodeId}: label must be a string` };
+      // Groups carry a plain Label; regular nodes carry Text (or a legacy
+      // string label that will migrate). Anything else is rejected wholesale.
+      if (node['kind'] === 'group') {
+        if (typeof node['label'] !== 'string') {
+          return { valid: false, error: `Invalid node ${nodeId}: label must be a string` };
+        }
+        if (node['text'] !== undefined) {
+          return { valid: false, error: `Invalid node ${nodeId}: a Group cannot carry text` };
+        }
+      } else {
+        if (node['text'] !== undefined) {
+          const reason = validateText(node['text']);
+          if (reason) {
+            return { valid: false, error: `Invalid node ${nodeId}: ${reason}` };
+          }
+        } else if (node['label'] === undefined) {
+          return { valid: false, error: `Invalid node ${nodeId}: missing text` };
+        }
+        if (node['label'] !== undefined && typeof node['label'] !== 'string') {
+          return { valid: false, error: `Invalid node ${nodeId}: label must be a string` };
+        }
       }
       if (typeof node['x'] !== 'number' || typeof node['y'] !== 'number') {
         return { valid: false, error: `Invalid node ${nodeId}: x and y must be numbers` };
@@ -435,7 +481,13 @@ export class GraphService {
       if (!validHandles.includes(conn['targetHandle'] as HandleSide)) {
         return { valid: false, error: `Invalid connection ${connId}: invalid targetHandle` };
       }
-      if (conn['label'] !== undefined && typeof conn['label'] !== 'string') {
+      if (conn['text'] !== undefined) {
+        const reason = validateText(conn['text']);
+        if (reason) {
+          return { valid: false, error: `Invalid connection ${connId}: ${reason}` };
+        }
+      } else if (conn['label'] !== undefined && typeof conn['label'] !== 'string') {
+        // Legacy plain-string label, migrated on import
         return { valid: false, error: `Invalid connection ${connId}: label must be a string` };
       }
       const sourceId = conn['sourceNodeId'] as string;
