@@ -1,8 +1,10 @@
 import { TestBed } from '@angular/core/testing';
 import { ExportService } from './export.service';
+import { ExportImageRenderer } from './export-image-renderer';
 import { GraphService } from './graph.service';
 import { CollectionService } from './collection.service';
 import { NODE_PALETTE } from '../models/node';
+import { exportBounds, EXPORT_THEMES } from '../models/export-image';
 import { ToastService } from '../components/toast/toast';
 
 describe('ExportService', () => {
@@ -65,6 +67,31 @@ describe('ExportService', () => {
 
       expect(toastService.message()).toBe('Graph exported to file');
       expect(toastService.type()).toBe('success');
+    });
+
+    it('names the JSON after the Project when given its id, still serializing the live graph', async () => {
+      // The dialog previews the live graph; the download must match it even
+      // when opened from the open Project's row (auto-save lags 300ms).
+      const col = collectionService.createCollection('C');
+      const proj = collectionService.createProject(col.id, 'Onboarding Flow!', {
+        nodes: [{ id: 'node_9_9', label: 'Stale store', x: 1, y: 2, width: 160, height: 48 }],
+        connections: [],
+      });
+      graphService.createNode('Live', 0, 0);
+
+      service.exportToFile(proj.id);
+
+      expect(clickedAnchor?.download).toBe('onboarding-flow.json');
+      const text = await capturedBlob!.text();
+      expect(text).toBe(JSON.stringify(graphService.exportGraph(), null, 2));
+    });
+  });
+
+  describe('jsonPayload', () => {
+    it('returns the pretty-printed live Graph State — the dialog preview and downloads share it', () => {
+      graphService.createNode('Preview', 3, 4);
+
+      expect(service.jsonPayload()).toBe(JSON.stringify(graphService.exportGraph(), null, 2));
     });
   });
 
@@ -303,6 +330,105 @@ describe('ExportService', () => {
       exported.nodes[0].label = 'Mutated';
 
       expect(graphService.nodes().find(n => n.id === group.id)?.label).toBe('G');
+    });
+  });
+
+  describe('PNG export (renderer stubbed — the shim itself is untestable in jsdom)', () => {
+    let render: ReturnType<typeof vi.fn>;
+    let capturedBlob: Blob | null;
+    let clickedAnchor: HTMLAnchorElement | null;
+    let clickSpy: ReturnType<typeof vi.spyOn>;
+    const pngBlob = new Blob(['png-bytes'], { type: 'image/png' });
+
+    beforeEach(() => {
+      TestBed.resetTestingModule();
+      render = vi.fn().mockResolvedValue(pngBlob);
+      TestBed.configureTestingModule({
+        providers: [{ provide: ExportImageRenderer, useValue: { render } }],
+      });
+      service = TestBed.inject(ExportService);
+      graphService = TestBed.inject(GraphService);
+      collectionService = TestBed.inject(CollectionService);
+      toastService = TestBed.inject(ToastService);
+
+      capturedBlob = null;
+      clickedAnchor = null;
+      URL.createObjectURL = vi.fn((blob: Blob) => {
+        capturedBlob = blob;
+        return 'blob:mock-url';
+      }) as typeof URL.createObjectURL;
+      URL.revokeObjectURL = vi.fn() as typeof URL.revokeObjectURL;
+      clickSpy = vi
+        .spyOn(HTMLAnchorElement.prototype, 'click')
+        .mockImplementation(function (this: HTMLAnchorElement) {
+          clickedAnchor = this;
+        });
+    });
+
+    afterEach(() => {
+      clickSpy.mockRestore();
+    });
+
+    it('renderPng hands the renderer the full-graph bounds, theme colors, and the Nodes', async () => {
+      graphService.createNode('A', 0, 0);
+      graphService.createNode('B', 300, 200);
+
+      const blob = await service.renderPng('dark');
+
+      expect(blob).toBe(pngBlob);
+      expect(render).toHaveBeenCalledWith(
+        exportBounds(graphService.nodes()),
+        EXPORT_THEMES.dark,
+        graphService.nodes(),
+      );
+      // Preview rendering neither downloads nor toasts
+      expect(clickedAnchor).toBeNull();
+      expect(toastService.message()).toBeNull();
+    });
+
+    it('renderPng maps the light theme to the light colors', async () => {
+      await service.renderPng('light');
+
+      expect(render).toHaveBeenCalledWith(exportBounds([]), EXPORT_THEMES.light, []);
+    });
+
+    it('exportPngToFile downloads the rendered blob as dropnode-graph.png with a success toast', async () => {
+      graphService.createNode('N', 10, 10);
+
+      await service.exportPngToFile('dark');
+
+      expect(clickedAnchor?.download).toBe('dropnode-graph.png');
+      expect(capturedBlob).toBe(pngBlob);
+      expect(toastService.message()).toBe('Graph exported to file');
+      expect(toastService.type()).toBe('success');
+    });
+
+    it('exportPngToFile names the file after the Project, slugged, when given a project id', async () => {
+      const col = collectionService.createCollection('C');
+      const proj = collectionService.createProject(col.id, 'Onboarding Flow!');
+
+      await service.exportPngToFile('light', proj.id);
+
+      expect(clickedAnchor?.download).toBe('onboarding-flow.png');
+    });
+
+    it('exportPngToFile falls back to project.png when the name slugs to nothing', async () => {
+      const col = collectionService.createCollection('C');
+      const proj = collectionService.createProject(col.id, '???');
+
+      await service.exportPngToFile('dark', proj.id);
+
+      expect(clickedAnchor?.download).toBe('project.png');
+    });
+
+    it('shows an error toast and downloads nothing when rendering fails', async () => {
+      render.mockRejectedValue(new Error('boom'));
+
+      await service.exportPngToFile('dark');
+
+      expect(clickedAnchor).toBeNull();
+      expect(toastService.message()).toBe('Failed to export PNG');
+      expect(toastService.type()).toBe('error');
     });
   });
 });

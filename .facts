@@ -121,11 +121,22 @@
 - Import validation does NOT reject duplicate Connection ids or self-connections — only createConnection guards those
 - Import whitelists Text wholesale: unknown block kinds or run keys, non-true format flags, sizes outside S/L, and non-http(s) links are rejected with "Invalid node {id}: {reason}" or "Invalid connection {id}: {reason}"; a Group carrying text is rejected, and a Group without a string label is rejected
 - legacy payloads with plain-string labels migrate on import: a regular node's or connection's label becomes single-run Text (empty connection labels drop the field) — old exports and ?data links stay valid; Export always writes the new text shape
-- label: the Export menu offers four items — Export JSON file, Copy JSON, Copy link, and a disabled Export to Drive placeholder hinting "Sign in required — coming soon"; it opens from the Scratch Canvas toolbar and from each project row's Export submenu in the Sidebar
-  command: grep -q 'Export to Drive' src/app/components/toolbar/toolbar.ts && grep -q 'Export to Drive' src/app/components/sidebar/sidebar.ts
+- label: the Export menu offers four items — Export as… (opens the export dialog), Copy JSON, Copy link, and a disabled Export to Drive placeholder hinting "Sign in required — coming soon"; it opens from the Scratch Canvas toolbar and from each project row's Export submenu in the Sidebar
+  command: grep -q 'Export to Drive' src/app/components/toolbar/toolbar.ts && grep -q 'Export to Drive' src/app/components/sidebar/sidebar.ts && grep -q 'Export as' src/app/components/toolbar/toolbar.ts
+- label: the "Export as…" dialog offers PNG and JSON formats with a live preview; it defaults to PNG + dark Export Theme on every open and persists nothing
+  command: grep -q "format.set('png')" src/app/components/export-dialog/export-dialog.ts && grep -q "theme.set('dark')" src/app/components/export-dialog/export-dialog.ts
+- the "Export as…" dialog closes on Escape, backdrop click, or its close button — dismissal has no side effects and downloads nothing
+- the Export Theme (dark | light) applies only while rendering a PNG: it sets the image background and flips the dark-only defaults (Group chrome and Connection Text chips); default Node fills, Node Text, and the Connection stroke keep their on-screen appearance, applied Palette colors pass through, and nothing is ever written to Graph State or the JSON payload
+- PNG export snapshots the on-screen graph via a foreignObject-serialized clone of the canvas-transform layer (ADR-0014); it is offered only from the Scratch Canvas toolbar and the currently open Project's Sidebar row — other project rows keep Export JSON file
+- the PNG snapshot carries the body's computed text defaults (font stack, size, line height) onto its root, so exported Text renders in the same font as the editor instead of the SVG serif fallback
+- label: the PNG captures the full graph bounds plus 40 canvas-unit padding at 2x scale, independent of pan/zoom, stripping Handles, Resize Grips, and selection chrome; an empty graph exports just the padded background
+  command: sh -c "grep -q 'EXPORT_PADDING = 40' src/app/models/export-image.ts && grep -q 'EXPORT_SCALE = 2' src/app/models/export-image.ts"
+- label: PNG is download-only (clipboard, link, and Drive stay JSON-only), named dropnode-graph.png on the Scratch Canvas or after the Project (slugged, fallback project.png), with a success toast; a failed render shows "Failed to export PNG" and downloads nothing
+  command: grep -q "'.png'" src/app/services/export.service.ts
+- the PNG preview runs the same renderPng pipeline as the download, regenerating debounced when the Export Theme changes; the JSON preview shows the exact pretty-printed payload
 - label: Export downloads pretty-printed 2-space JSON named dropnode-graph.json with a success toast; Copy JSON copies the same JSON to the clipboard with a success/error toast
-  command: grep -q 'dropnode-graph.json' src/app/services/export.service.ts
-- a project row's Export actions read the stored graph from localStorage and never navigate; the file is named after the Project (slugged), falling back to project.json
+  command: sh -c "grep -q \"'dropnode-graph'\" src/app/services/export.service.ts && grep -q \"'.json'\" src/app/services/export.service.ts"
+- a project row's Export actions read the stored graph from localStorage and never navigate; the file is named after the Project (slugged), falling back to project.json — except the open Project's row, whose "Export as…" dialog exports the live on-screen graph (matching its preview) under the same Project filename
 - Copy link copies <origin>/?data=<url-encoded pretty JSON>, dropping any existing path and query parameters — share links always land on the Scratch Canvas; the link is copied whatever its length, with a success/error toast
 - the Export menu is built on @angular/cdk/menu primitives; export side effects live in ExportService, never in the toolbar component
 - exported Graph State is a copy; mutating it does not affect editor state
