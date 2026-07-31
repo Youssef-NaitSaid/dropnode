@@ -28,6 +28,7 @@ import {
   buildSetConnectionsArrowheadCommand,
   buildAlignSelectionCommand,
   buildDistributeSelectionCommand,
+  buildTidyUpCommand,
 } from './commands';
 
 describe('Commands', () => {
@@ -1220,6 +1221,107 @@ describe('Commands', () => {
       const c = graphService.createNode('C', 400, 0);
 
       expect(buildDistributeSelectionCommand(graphService, [a.id, b.id, c.id], 'horizontal')).toBeNull();
+    });
+  });
+
+  // Behavior-only, through execute()/undo() (spec #26, ADR-0019): the layout
+  // geometry itself is the tidy-layout module's spec — here we assert the
+  // Command applies and restores positions, Group rects, and Handle fields.
+  describe('buildTidyUpCommand', () => {
+    it('execute moves Nodes into the layered flow and re-picks Handles as one step', () => {
+      // Chain a→b drawn vertically with top→top Handles: tidy lays it
+      // left-to-right (b one layer right of a) and turns the Handles to face
+      const a = graphService.createNode('A', 0, 0);
+      const b = graphService.createNode('B', 10, 300);
+      const conn = graphService.createConnection(a.id, 'top', b.id, 'top')!;
+
+      const cmd = buildTidyUpCommand(graphService)!;
+      expect(cmd.description).toBe('Tidy up');
+      cmd.execute();
+
+      expect(graphService.nodes().find(n => n.id === a.id)).toMatchObject({ x: 0, y: 0 });
+      expect(graphService.nodes().find(n => n.id === b.id)).toMatchObject({ x: 280, y: 0 });
+      expect(graphService.connections().find(c => c.id === conn.id)).toMatchObject({
+        sourceHandle: 'right',
+        targetHandle: 'left',
+      });
+    });
+
+    it('execute resizes a Group to exact fit around its tidied children', () => {
+      const group = graphService.createGroup('G', 500, 500);
+      const child = graphService.createNode('C', 510, 510);
+      graphService.setNodeParent(child.id, group.id);
+
+      buildTidyUpCommand(graphService)!.execute();
+
+      // Old bounds top-left is (500,500); the lone child sits at the content
+      // origin (padding 16), and the Group wraps it exactly: 160+32 x 48+32
+      expect(graphService.nodes().find(n => n.id === group.id)).toMatchObject({
+        x: 500, y: 500, width: 192, height: 80,
+      });
+      expect(graphService.nodes().find(n => n.id === child.id)).toMatchObject({ x: 516, y: 516 });
+    });
+
+    it('undo restores positions, Group rects, and Handles exactly, ids untouched', () => {
+      const a = graphService.createNode('A', 40, 700);
+      const b = graphService.createNode('B', 10, 300);
+      graphService.createConnection(a.id, 'bottom', b.id, 'bottom');
+      const group = graphService.createGroup('G', 900, 0);
+      const child = graphService.createNode('C', 950, 60);
+      graphService.setNodeParent(child.id, group.id);
+      const nodesBefore = structuredClone(graphService.nodes());
+      const connsBefore = structuredClone(graphService.connections());
+
+      const cmd = buildTidyUpCommand(graphService)!;
+      cmd.execute();
+      expect(graphService.nodes()).not.toEqual(nodesBefore);
+      cmd.undo();
+
+      expect(graphService.nodes()).toEqual(nodesBefore);
+      expect(graphService.connections()).toEqual(connsBefore);
+    });
+
+    it('redo reapplies the identical tidy', () => {
+      const a = graphService.createNode('A', 0, 0);
+      const b = graphService.createNode('B', 10, 300);
+      graphService.createConnection(a.id, 'top', b.id, 'top');
+
+      const cmd = buildTidyUpCommand(graphService)!;
+      cmd.execute();
+      const tidied = structuredClone(graphService.nodes());
+      const tidiedConns = structuredClone(graphService.connections());
+      cmd.undo();
+      cmd.execute();
+
+      expect(graphService.nodes()).toEqual(tidied);
+      expect(graphService.connections()).toEqual(tidiedConns);
+    });
+
+    it('returns null for an empty graph and for an already-tidy graph', () => {
+      expect(buildTidyUpCommand(graphService)).toBeNull();
+
+      const a = graphService.createNode('A', 0, 0);
+      const b = graphService.createNode('B', 10, 300);
+      graphService.createConnection(a.id, 'top', b.id, 'top');
+      buildTidyUpCommand(graphService)!.execute();
+
+      expect(buildTidyUpCommand(graphService)).toBeNull();
+    });
+
+    it('neither execute nor undo touches the Selection', () => {
+      const a = graphService.createNode('A', 0, 0);
+      const b = graphService.createNode('B', 10, 300);
+      const conn = graphService.createConnection(a.id, 'top', b.id, 'top')!;
+      graphService.setSelection([a.id], [conn.id]);
+
+      const cmd = buildTidyUpCommand(graphService)!;
+      cmd.execute();
+      expect(graphService.selectedNodeIds()).toEqual([a.id]);
+      expect(graphService.selectedConnectionIds()).toEqual([conn.id]);
+
+      cmd.undo();
+      expect(graphService.selectedNodeIds()).toEqual([a.id]);
+      expect(graphService.selectedConnectionIds()).toEqual([conn.id]);
     });
   });
 });

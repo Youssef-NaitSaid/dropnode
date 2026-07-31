@@ -113,6 +113,18 @@
 - Align and Distribute never change Group membership: no root is adopted into a Group it lands on and no child is orphaned by being pushed outside its Group's frame — a child may be left overhanging (ADR-0018) @implemented
 - the toolbar shows an eight-button Align/Distribute cluster while the Selection holds at least two node roots, with the two Distribute buttons disabled below three roots; the multi-Selection Context Menu carries the same eight actions in an "Align" submenu under the same rules @implemented
 
+## tidy up
+
+- label: the toolbar Tidy up button (beside the zoom cluster) recomputes every Node's position into a fixed left-to-right layered arrangement following Connection direction, always the whole graph, as one TidyUpCommand undo step (ADR-0019) @implemented
+  command: grep -q 'buildTidyUpCommand' src/app/services/commands.ts
+- label: the engine is a hand-rolled pure module — cycle-breaking, longest-path layering, barycenter ordering sweeps, coordinates from real Node rects — no dagre or elkjs (ADR-0019); spacing constants are 120 between layers, 40 within a layer, 80 between components, 40 loner-grid gutters @implemented
+  command: sh -c "grep -q 'TIDY_LAYER_GAP = 120' src/app/models/tidy-layout.ts && ! grep -q 'dagre' package.json"
+- Tidy up is two-level: each Group contracts to one unit at the top level (Connections touching a child are promoted to its Group), its children lay out inside from intra-group Connections only, and the Group's rect becomes exactly its children's bounds plus the 16-unit padding — childless Groups keep their size, and regular Node sizes are never touched @implemented
+- Tidy up re-picks every Connection's sourceHandle and targetHandle to face the counterpart along the dominant axis between the new rects (ties fall horizontal); parallel Connections may collapse onto identical endpoints and render overlapping — accepted as cosmetic @implemented
+- disconnected components stack vertically largest-area-first; Connection-less regular Nodes gather into a grid after the last component; a Connection-less Group still stacks as a one-unit component, never in the grid @implemented
+- the tidied arrangement anchors its bounding-box top-left at the old graph bounds' top-left; results are deterministic (every tie breaks on nodes array order) and idempotent — an empty or already-tidy graph builds no Command and pushes nothing onto History @implemented
+- after a tidy executes, the toolbar runs the standard Zoom to fit (viewport-only, no History entry); the Selection is neither read nor cleared, and undo restores positions, Group rects, and Handles exactly with ids untouched @implemented
+
 ## viewport
 
 - zoom is clamped to the range 0.1 to 5

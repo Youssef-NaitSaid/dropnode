@@ -27,6 +27,7 @@ import {
   lucideAlignEndHorizontal,
   lucideAlignHorizontalSpaceBetween,
   lucideAlignVerticalSpaceBetween,
+  lucideNetwork,
 } from '@ng-icons/lucide';
 import { HlmButton } from '@spartan-ng/helm/button';
 import { HlmSeparator } from '@spartan-ng/helm/separator';
@@ -49,6 +50,7 @@ import {
   buildSetConnectionsArrowheadCommand,
   buildAlignSelectionCommand,
   buildDistributeSelectionCommand,
+  buildTidyUpCommand,
 } from '../../services/commands';
 import { AlignKind, DistributeAxis } from '../../models/align-distribute';
 import { NODE_PALETTE } from '../../models/node';
@@ -86,6 +88,7 @@ import { ArrowheadType, ArrowheadEnd, effectiveArrowhead } from '../../models/co
       lucideAlignEndHorizontal,
       lucideAlignHorizontalSpaceBetween,
       lucideAlignVerticalSpaceBetween,
+      lucideNetwork,
     }),
   ],
   template: `
@@ -215,6 +218,9 @@ import { ArrowheadType, ArrowheadEnd, effectiveArrowhead } from '../../models/co
         </button>
         <button hlmBtn variant="ghost" size="icon" (click)="zoomToFit()" title="Zoom to Fit" aria-label="Zoom to fit">
           <ng-icon name="lucideMaximize" />
+        </button>
+        <button hlmBtn variant="ghost" size="icon" (click)="tidyUp()" title="Tidy up" aria-label="Tidy up">
+          <ng-icon name="lucideNetwork" />
         </button>
         <span class="min-w-10 text-center text-sm font-medium text-muted-foreground">{{ zoomPercent() }}%</span>
         <hlm-separator orientation="vertical" class="mx-1" />
@@ -457,6 +463,16 @@ export class ToolbarComponent {
     const rect = document.querySelector('.canvas-container')?.getBoundingClientRect();
     if (!rect) return;
     this.graphService.zoomToFit(rect.width, rect.height);
+  }
+
+  // Tidy up (spec #26, ADR-0019): one undo step, then the standard Zoom to
+  // fit reveal (viewport-only, no History entry). Empty or already-tidy
+  // graphs build no Command and touch nothing.
+  tidyUp(): void {
+    const cmd = buildTidyUpCommand(this.graphService);
+    if (!cmd) return;
+    this.historyService.execute(cmd);
+    this.zoomToFit();
   }
 
   undo(): void {
