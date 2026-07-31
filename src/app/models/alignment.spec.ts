@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { computeAlignment, ALIGNMENT_SNAP_THRESHOLD } from './alignment';
+import { computeAlignment, computeResizeAlignment, ALIGNMENT_SNAP_THRESHOLD } from './alignment';
 import { Rect } from './marquee';
 
 // The dragged rect used across most cases: left=100, centerX=150, right=200;
@@ -112,6 +112,86 @@ describe('computeAlignment', () => {
       dx: 0,
       dy: 0,
       guides: [{ orientation: 'vertical', position: 100, start: 100, end: 320 }],
+    });
+  });
+});
+
+describe('computeResizeAlignment', () => {
+  // The rect being resized: left=100, right=195; top=100, bottom=140.
+  // An 'se' grip drag moves the right and bottom edges; 'nw' the left and top.
+  const rect = (): Rect => ({ x: 100, y: 100, width: 95, height: 40 });
+  const se = { vertical: 'right', horizontal: 'bottom' } as const;
+  const nw = { vertical: 'left', horizontal: 'top' } as const;
+
+  it('returns no offset and no guides when there are no candidates', () => {
+    expect(computeResizeAlignment(rect(), se, [], T)).toEqual({ dx: 0, dy: 0, guides: [] });
+  });
+
+  it('snaps the moving right edge onto a candidate left edge', () => {
+    // candidate left=198 → moving right edge 195, dx +3; guide spans both rects
+    const candidate: Rect = { x: 198, y: 300, width: 50, height: 30 };
+    expect(computeResizeAlignment(rect(), se, [candidate], T)).toEqual({
+      dx: 3,
+      dy: 0,
+      guides: [{ orientation: 'vertical', position: 198, start: 100, end: 330 }],
+    });
+  });
+
+  it('snaps the moving edge onto a candidate center (edge-to-center)', () => {
+    // candidate centerX=192 → moving right edge 195, dx -3
+    const candidate: Rect = { x: 160, y: 300, width: 64, height: 20 };
+    expect(computeResizeAlignment(rect(), se, [candidate], T)).toEqual({
+      dx: -3,
+      dy: 0,
+      guides: [{ orientation: 'vertical', position: 192, start: 100, end: 320 }],
+    });
+  });
+
+  it('never snaps the anchored edge or the centers of the resized rect', () => {
+    // candidate left=98 sits 2 from the ANCHORED left edge (would snap a move)
+    // but 97 from the moving right edge → resize must ignore it
+    const candidate: Rect = { x: 98, y: 300, width: 20, height: 20 };
+    expect(computeResizeAlignment(rect(), se, [candidate], T)).toEqual({ dx: 0, dy: 0, guides: [] });
+  });
+
+  it('applies a west-edge snap to x and width together', () => {
+    // nw grip: moving left edge 100 → candidate left 104, dx +4
+    const candidate: Rect = { x: 104, y: 300, width: 40, height: 20 };
+    expect(computeResizeAlignment(rect(), nw, [candidate], T)).toEqual({
+      dx: 4,
+      dy: 0,
+      guides: [{ orientation: 'vertical', position: 104, start: 100, end: 320 }],
+    });
+  });
+
+  it('snaps both moving edges at once from one corner', () => {
+    // candidate left=198 (dx +3) and top=137 (dy -3 for the bottom edge)
+    const candidate: Rect = { x: 198, y: 137, width: 50, height: 63 };
+    expect(computeResizeAlignment(rect(), se, [candidate], T)).toEqual({
+      dx: 3,
+      dy: -3,
+      guides: [
+        { orientation: 'vertical', position: 198, start: 100, end: 200 },
+        { orientation: 'horizontal', position: 137, start: 100, end: 248 },
+      ],
+    });
+  });
+
+  it('does not snap a candidate just beyond the threshold', () => {
+    // candidate left=202 → delta 7 > 6; every other axis is farther still
+    const candidate: Rect = { x: 202, y: 300, width: 20, height: 20 };
+    expect(computeResizeAlignment(rect(), se, [candidate], T)).toEqual({ dx: 0, dy: 0, guides: [] });
+  });
+
+  it('reports guides for exact coincidences at threshold 0 (post-clamp rendering)', () => {
+    // The caller re-runs with the applied rect and threshold 0, so a snap the
+    // service clamped away yields no guide while an exact landing keeps one
+    const already: Rect = { x: 100, y: 100, width: 98, height: 40 }; // right edge 198
+    const candidate: Rect = { x: 198, y: 300, width: 50, height: 30 };
+    expect(computeResizeAlignment(already, se, [candidate], 0)).toEqual({
+      dx: 0,
+      dy: 0,
+      guides: [{ orientation: 'vertical', position: 198, start: 100, end: 330 }],
     });
   });
 });

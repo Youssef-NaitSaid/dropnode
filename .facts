@@ -106,6 +106,7 @@
 - a guide is drawn for every visible Node coincident at the snapped position, each line spanning the dragged Node plus those Nodes; candidates are Viewport-only and all guides vanish on mouseup @implemented
 - a dragged Group aligns by its own rect and a multi-Selection by the union of its roots; the moving set — the dragged Nodes plus any dragged Group's children — is never an alignment candidate @implemented
 - Alt+drag Duplicates align on the same drag path, with the stationary original a valid candidate @implemented
+- a Resize Grip drag aligns and snaps only its two moving edges (the dragged corner's vertical and horizontal edge) against candidates' edges and centers — the anchored edges and the resized rect's centers never participate; the Text-derived minimums and a Group's child-padding clamp override the snap, and an overridden snap shows no guide @implemented
 
 ## viewport
 

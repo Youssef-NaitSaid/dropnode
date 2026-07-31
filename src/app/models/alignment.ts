@@ -89,6 +89,50 @@ export function computeAlignment(dragged: Rect, candidates: Rect[], threshold: n
   return { dx, dy, guides };
 }
 
+// The edges a Resize Grip drag moves: the dragged corner's vertical edge
+// (left or right) and horizontal edge (top or bottom).
+export interface MovingEdges {
+  vertical: 'left' | 'right';
+  horizontal: 'top' | 'bottom';
+}
+
+/**
+ * Align a resize against the candidate rects: only the two MOVING edges
+ * participate — never the anchored edges or the resized rect's centers, which
+ * would fight the anchor — while candidates still expose all three axes per
+ * dimension. dx/dy are the offsets to apply to the moving edges (a left/top
+ * snap shifts x/y and the size together; a right/bottom snap only the size).
+ * Guides render from the snapped rect, exactly as in computeAlignment.
+ */
+export function computeResizeAlignment(
+  rect: Rect,
+  moving: MovingEdges,
+  candidates: Rect[],
+  threshold: number,
+): AlignmentResult {
+  const movingX = moving.vertical === 'left' ? rect.x : rect.x + rect.width;
+  const movingY = moving.horizontal === 'top' ? rect.y : rect.y + rect.height;
+
+  const dx = nearestOffset([movingX], candidates.map(verticalAxes), threshold);
+  const dy = nearestOffset([movingY], candidates.map(horizontalAxes), threshold);
+
+  const final: Rect = {
+    x: moving.vertical === 'left' ? rect.x + dx : rect.x,
+    y: moving.horizontal === 'top' ? rect.y + dy : rect.y,
+    width: moving.vertical === 'left' ? rect.width - dx : rect.width + dx,
+    height: moving.horizontal === 'top' ? rect.height - dy : rect.height + dy,
+  };
+
+  const guides: AlignmentGuide[] = [
+    ...axisGuides('vertical', [movingX + dx], candidates, verticalAxes,
+      final.y, final.y + final.height, r => r.y, r => r.y + r.height),
+    ...axisGuides('horizontal', [movingY + dy], candidates, horizontalAxes,
+      final.x, final.x + final.width, r => r.x, r => r.x + r.width),
+  ];
+
+  return { dx, dy, guides };
+}
+
 // One guide per distinct position where a dragged axis coincides with a
 // candidate axis; the span covers the dragged rect and every coincident
 // candidate on the perpendicular dimension.
