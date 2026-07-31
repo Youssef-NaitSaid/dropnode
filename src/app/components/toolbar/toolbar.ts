@@ -19,6 +19,14 @@ import {
   lucideMinus,
   lucideArrowRight,
   lucidePlay,
+  lucideAlignStartVertical,
+  lucideAlignCenterVertical,
+  lucideAlignEndVertical,
+  lucideAlignStartHorizontal,
+  lucideAlignCenterHorizontal,
+  lucideAlignEndHorizontal,
+  lucideAlignHorizontalSpaceBetween,
+  lucideAlignVerticalSpaceBetween,
 } from '@ng-icons/lucide';
 import { HlmButton } from '@spartan-ng/helm/button';
 import { HlmSeparator } from '@spartan-ng/helm/separator';
@@ -39,7 +47,10 @@ import {
   buildSetNodesColorCommand,
   buildSetConnectionsColorCommand,
   buildSetConnectionsArrowheadCommand,
+  buildAlignSelectionCommand,
+  buildDistributeSelectionCommand,
 } from '../../services/commands';
+import { AlignKind, DistributeAxis } from '../../models/align-distribute';
 import { NODE_PALETTE } from '../../models/node';
 import { ArrowheadType, ArrowheadEnd, effectiveArrowhead } from '../../models/connection';
 
@@ -67,6 +78,14 @@ import { ArrowheadType, ArrowheadEnd, effectiveArrowhead } from '../../models/co
       lucideMinus,
       lucideArrowRight,
       lucidePlay,
+      lucideAlignStartVertical,
+      lucideAlignCenterVertical,
+      lucideAlignEndVertical,
+      lucideAlignStartHorizontal,
+      lucideAlignCenterHorizontal,
+      lucideAlignEndHorizontal,
+      lucideAlignHorizontalSpaceBetween,
+      lucideAlignVerticalSpaceBetween,
     }),
   ],
   template: `
@@ -102,6 +121,35 @@ import { ArrowheadType, ArrowheadEnd, effectiveArrowhead } from '../../models/co
                 (click)="setColor(color)"
               ></button>
             }
+          </div>
+        }
+        @if (graphService.selectedNodes().length >= 2) {
+          <hlm-separator orientation="vertical" class="mx-1" />
+          <div class="flex items-center gap-0.5">
+            <button hlmBtn variant="ghost" size="icon" (click)="align('left')" title="Align left" aria-label="Align left">
+              <ng-icon name="lucideAlignStartVertical" />
+            </button>
+            <button hlmBtn variant="ghost" size="icon" (click)="align('center')" title="Align center" aria-label="Align center">
+              <ng-icon name="lucideAlignCenterVertical" />
+            </button>
+            <button hlmBtn variant="ghost" size="icon" (click)="align('right')" title="Align right" aria-label="Align right">
+              <ng-icon name="lucideAlignEndVertical" />
+            </button>
+            <button hlmBtn variant="ghost" size="icon" (click)="align('top')" title="Align top" aria-label="Align top">
+              <ng-icon name="lucideAlignStartHorizontal" />
+            </button>
+            <button hlmBtn variant="ghost" size="icon" (click)="align('middle')" title="Align middle" aria-label="Align middle">
+              <ng-icon name="lucideAlignCenterHorizontal" />
+            </button>
+            <button hlmBtn variant="ghost" size="icon" (click)="align('bottom')" title="Align bottom" aria-label="Align bottom">
+              <ng-icon name="lucideAlignEndHorizontal" />
+            </button>
+            <button hlmBtn variant="ghost" size="icon" (click)="distribute('horizontal')" [disabled]="graphService.selectedNodes().length < 3" title="Distribute horizontally" aria-label="Distribute horizontally">
+              <ng-icon name="lucideAlignHorizontalSpaceBetween" />
+            </button>
+            <button hlmBtn variant="ghost" size="icon" (click)="distribute('vertical')" [disabled]="graphService.selectedNodes().length < 3" title="Distribute vertically" aria-label="Distribute vertically">
+              <ng-icon name="lucideAlignVerticalSpaceBetween" />
+            </button>
           </div>
         }
         @if (graphService.selectedConnections().length > 0) {
@@ -357,6 +405,22 @@ export class ToolbarComponent {
   setArrowhead(end: ArrowheadEnd, type: ArrowheadType): void {
     const cmd = buildSetConnectionsArrowheadCommand(
       this.graphService, this.graphService.selectedConnectionIds(), end, type,
+    );
+    if (cmd) this.historyService.execute(cmd);
+  }
+
+  // Align/Distribute (spec #25): one compound undo step over the Selection's
+  // roots, a silent no-op when nothing would move
+  align(kind: AlignKind): void {
+    const cmd = buildAlignSelectionCommand(
+      this.graphService, this.graphService.selectedNodeIds(), kind,
+    );
+    if (cmd) this.historyService.execute(cmd);
+  }
+
+  distribute(axis: DistributeAxis): void {
+    const cmd = buildDistributeSelectionCommand(
+      this.graphService, this.graphService.selectedNodeIds(), axis,
     );
     if (cmd) this.historyService.execute(cmd);
   }

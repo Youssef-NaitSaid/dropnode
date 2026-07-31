@@ -7,8 +7,14 @@ import { NgIcon, provideIcons } from '@ng-icons/core';
 import {
   lucideSquarePlus, lucideGroup, lucidePencil, lucideTag, lucideTrash2,
   lucideScissors, lucideCopy, lucideClipboardPaste, lucideCopyPlus,
+  lucideAlignStartVertical, lucideAlignCenterVertical, lucideAlignEndVertical,
+  lucideAlignStartHorizontal, lucideAlignCenterHorizontal, lucideAlignEndHorizontal,
+  lucideAlignHorizontalSpaceBetween, lucideAlignVerticalSpaceBetween,
 } from '@ng-icons/lucide';
-import { HlmDropdownMenu, HlmDropdownMenuItem } from '@spartan-ng/helm/dropdown-menu';
+import {
+  HlmDropdownMenu, HlmDropdownMenuItem, HlmDropdownMenuSub, HlmDropdownMenuSubTrigger,
+  HlmDropdownMenuItemSubIndicator,
+} from '@spartan-ng/helm/dropdown-menu';
 import { GraphService } from '../../services/graph.service';
 import { HistoryService } from '../../services/history.service';
 import { ContextMenuService } from '../../services/context-menu.service';
@@ -44,11 +50,15 @@ import { Text } from '../../models/text';
   imports: [
     NodeComponent, ConnectionLayerComponent, NgIcon,
     CdkContextMenuTrigger, HlmDropdownMenu, HlmDropdownMenuItem,
+    HlmDropdownMenuSub, HlmDropdownMenuSubTrigger, HlmDropdownMenuItemSubIndicator,
   ],
   providers: [
     provideIcons({
       lucideSquarePlus, lucideGroup, lucidePencil, lucideTag, lucideTrash2,
       lucideScissors, lucideCopy, lucideClipboardPaste, lucideCopyPlus,
+      lucideAlignStartVertical, lucideAlignCenterVertical, lucideAlignEndVertical,
+      lucideAlignStartHorizontal, lucideAlignCenterHorizontal, lucideAlignEndHorizontal,
+      lucideAlignHorizontalSpaceBetween, lucideAlignVerticalSpaceBetween,
     }),
   ],
   template: `
@@ -217,12 +227,58 @@ import { Text } from '../../models/text';
               <ng-icon name="lucideCopyPlus" />
               <span>Duplicate</span>
             </button>
+            @if (contextMenuService.canAlign()) {
+              <button hlmDropdownMenuItem [hlmDropdownMenuSubTrigger]="alignSubmenu">
+                <ng-icon name="lucideAlignStartVertical" />
+                <span>Align</span>
+                <hlm-dropdown-menu-item-sub-indicator />
+              </button>
+            }
             <button hlmDropdownMenuItem variant="destructive" (triggered)="contextMenuService.deleteSelection()">
               <ng-icon name="lucideTrash2" />
               <span>Delete</span>
             </button>
           }
         }
+      </div>
+    </ng-template>
+
+    <!-- Align/Distribute submenu of the multi menu (spec #25): eight Commands
+         on the Selection's roots; Distribute needs three of them -->
+    <ng-template #alignSubmenu>
+      <div hlmDropdownMenuSub class="w-52">
+        <button hlmDropdownMenuItem (triggered)="contextMenuService.alignSelection('left')">
+          <ng-icon name="lucideAlignStartVertical" />
+          <span>Align left</span>
+        </button>
+        <button hlmDropdownMenuItem (triggered)="contextMenuService.alignSelection('center')">
+          <ng-icon name="lucideAlignCenterVertical" />
+          <span>Align center</span>
+        </button>
+        <button hlmDropdownMenuItem (triggered)="contextMenuService.alignSelection('right')">
+          <ng-icon name="lucideAlignEndVertical" />
+          <span>Align right</span>
+        </button>
+        <button hlmDropdownMenuItem (triggered)="contextMenuService.alignSelection('top')">
+          <ng-icon name="lucideAlignStartHorizontal" />
+          <span>Align top</span>
+        </button>
+        <button hlmDropdownMenuItem (triggered)="contextMenuService.alignSelection('middle')">
+          <ng-icon name="lucideAlignCenterHorizontal" />
+          <span>Align middle</span>
+        </button>
+        <button hlmDropdownMenuItem (triggered)="contextMenuService.alignSelection('bottom')">
+          <ng-icon name="lucideAlignEndHorizontal" />
+          <span>Align bottom</span>
+        </button>
+        <button hlmDropdownMenuItem [disabled]="!contextMenuService.canDistribute()" (triggered)="contextMenuService.distributeSelection('horizontal')">
+          <ng-icon name="lucideAlignHorizontalSpaceBetween" />
+          <span>Distribute horizontally</span>
+        </button>
+        <button hlmDropdownMenuItem [disabled]="!contextMenuService.canDistribute()" (triggered)="contextMenuService.distributeSelection('vertical')">
+          <ng-icon name="lucideAlignVerticalSpaceBetween" />
+          <span>Distribute vertically</span>
+        </button>
       </div>
     </ng-template>
   `,
