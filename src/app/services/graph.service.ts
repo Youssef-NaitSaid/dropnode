@@ -3,8 +3,8 @@ import { GraphNode, HandleSide, NODE_PALETTE } from '../models/node';
 import { Connection, ArrowheadType, ArrowheadEnd, ARROWHEAD_TYPES, defaultArrowhead, TEXT_POSITION_MIN, TEXT_POSITION_MAX, TEXT_POSITION_DEFAULT } from '../models/connection';
 import { GraphState } from '../models/graph-state';
 import { ViewportState, ZOOM_MIN, ZOOM_MAX } from '../models/viewport-state';
-import { Bounds, graphBounds, unionBounds, curveBounds, frameViewport } from '../models/bounds';
-import { connectionCurve } from '../models/curve';
+import { Bounds, unionBounds, contentBounds, connectionBounds, frameViewport } from '../models/bounds';
+import { handlePoint } from '../models/curve';
 import { Text, textFromString, isTextEmpty, validateText, canonicalizeText } from '../models/text';
 
 @Injectable({ providedIn: 'root' })
@@ -383,11 +383,11 @@ export class GraphService {
     this.viewportState.set({ panX: newPanX, panY: newPanY, zoom: newZoom });
   }
 
-  // Frame the whole graph (nodes-only bounds, Groups included) into the given
-  // visible-canvas region, centered, never magnifying past 1x. An empty graph
-  // is a silent no-op. Pure Viewport change — no History entry.
+  // Frame the whole graph (all Nodes plus Connection curves, Groups included)
+  // into the given visible-canvas region, centered, never magnifying past 1x.
+  // An empty graph is a silent no-op. Pure Viewport change — no History entry.
   zoomToFit(viewWidth: number, viewHeight: number): void {
-    const bounds = this.contentBounds();
+    const bounds = contentBounds(this.nodes(), this.connections());
     if (!bounds) return;
     this.viewportState.set(frameViewport(bounds, viewWidth, viewHeight, GraphService.FIT_MAX_ZOOM));
   }
@@ -403,7 +403,7 @@ export class GraphService {
 
   // Bounds of the current selection: a Node by its rect, a Group unioned with
   // its children (a child's edge can overhang the Group rect), a Connection by
-  // the box of its two endpoint Handles. Null when nothing is selected.
+  // its cubic bezier curve bounds. Null when nothing is selected.
   private selectionBounds(): Bounds | null {
     const node = this.selectedNode();
     if (node) {
@@ -418,49 +418,19 @@ export class GraphService {
     const connId = this.selectedConnectionId();
     if (connId) {
       const conn = this.connections().find(c => c.id === connId);
-      return conn ? this.connectionBounds(conn) : null;
+      if (!conn) return null;
+      const nodeById = new Map(this.nodes().map(n => [n.id, n]));
+      return connectionBounds(conn, nodeById);
     }
 
     return null;
   }
 
-  // Bounds enclosing everything drawn: all Nodes plus every Connection's curve
-  // (curves bow outside the node box). Null when there are no Nodes.
-  private contentBounds(): Bounds | null {
-    const nodeBox = graphBounds(this.nodes());
-    if (!nodeBox) return null;
-    const rects: Bounds[] = [nodeBox];
-    for (const conn of this.connections()) {
-      const b = this.connectionBounds(conn);
-      if (b) rects.push(b);
-    }
-    return unionBounds(rects);
-  }
-
-  // A single Connection's bounds: the box of its cubic bezier control points
-  // (the curve stays within their convex hull), so a bowing arc is enclosed.
-  private connectionBounds(conn: Connection): Bounds | null {
-    const start = this.getHandlePosition(conn.sourceNodeId, conn.sourceHandle);
-    const end = this.getHandlePosition(conn.targetNodeId, conn.targetHandle);
-    if (!start || !end) return null;
-    return curveBounds(connectionCurve(start, end, conn.sourceHandle, conn.targetHandle));
-  }
-
-  // Handle position computation
+  // Handle position computation — the pure geometry lives in curve.ts so bounds
+  // and the connection layer share one definition.
   getHandlePosition(nodeId: string, handle: HandleSide): { x: number; y: number } | null {
     const node = this.nodes().find(n => n.id === nodeId);
-    if (!node) return null;
-
-    switch (handle) {
-      case 'top':
-        return { x: node.x + node.width / 2, y: node.y };
-      case 'right':
-        return { x: node.x + node.width, y: node.y + node.height / 2 };
-      case 'bottom':
-        return { x: node.x + node.width / 2, y: node.y + node.height };
-      case 'left':
-        return { x: node.x, y: node.y + node.height / 2 };
-    }
+    return node ? handlePoint(node, handle) : null;
   }
 
   // Import/Export

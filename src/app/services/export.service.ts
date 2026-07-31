@@ -69,7 +69,8 @@ export class ExportService {
   /** Real snapshot of the rendered graph — the preview and the download share this. */
   renderPng(theme: ExportTheme): Promise<Blob> {
     const nodes = this.graphService.nodes();
-    return this.imageRenderer.render(exportBounds(nodes), EXPORT_THEMES[theme], nodes);
+    const connections = this.graphService.connections();
+    return this.imageRenderer.render(exportBounds(nodes, connections), EXPORT_THEMES[theme], nodes);
   }
 
   /** Named after the Project when given its id, else the Scratch Canvas default. */

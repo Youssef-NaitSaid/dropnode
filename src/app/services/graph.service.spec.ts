@@ -640,19 +640,19 @@ describe('GraphService', () => {
     it('zoomToFit includes Connection curves that bow outside the node box', () => {
       const a = service.createNode('a', 0, 0, 100, 100);
       const b = service.createNode('b', 900, 0, 100, 100);
-      // a top -> b top: the curve bows up to y=-150 (offset clamped at 150),
-      // well above the node box (which starts at y=0)
+      // a top -> b top: the curve's tight bounds reach y=-112.5 (its actual
+      // apex, well above the node box which starts at y=0)
       service.createConnection(a.id, 'top', b.id, 'top');
 
       service.zoomToFit(W, H);
 
       const vp = service.viewportState();
-      // content box: x 0..1000, y -150..100 -> 1000 x 250
-      // zoom = min(0.9*800/1000, 0.9*600/250) = min(0.72, 2.16) = 0.72
+      // content box: x 0..1000, y -112.5..100 -> 1000 x 212.5
+      // zoom = min(0.9*800/1000, 0.9*600/212.5) = min(0.72, 2.541) = 0.72
       expect(vp.zoom).toBeCloseTo(0.72, 5);
-      // center (500,-25): panX = 400 - 500*0.72 = 40 ; panY = 300 - (-25)*0.72 = 318
+      // center (500,-6.25): panX = 400 - 500*0.72 = 40 ; panY = 300 - (-6.25)*0.72 = 304.5
       expect(vp.panX).toBeCloseTo(40, 5);
-      expect(vp.panY).toBeCloseTo(318, 5);
+      expect(vp.panY).toBeCloseTo(304.5, 5);
     });
 
     it('zoomToSelection frames the selected Node, magnifying up to 2x', () => {
@@ -742,17 +742,17 @@ describe('GraphService', () => {
       const b = service.createNode('b', 900, 0, 100, 100);
       const conn = service.createConnection(a.id, 'top', b.id, 'top');
       service.selectConnection(conn!.id);
-      // curve control-point box: x 50..950, y -150..0 -> 900 x 150
+      // tight curve box: x 50..950, y -112.5..0 -> 900 x 112.5
       // (the endpoints alone would be a zero-height line at y=0)
 
       service.zoomToSelection(W, H);
 
       const vp = service.viewportState();
-      // zoom = min(0.9*800/900, 0.9*600/150) = min(0.8, 3.6) = 0.8
+      // zoom = min(0.9*800/900, 0.9*600/112.5) = min(0.8, 4.8) = 0.8
       expect(vp.zoom).toBeCloseTo(0.8, 5);
-      // center (500,-75): panX = 400 - 500*0.8 = 0 ; panY = 300 - (-75)*0.8 = 360
+      // center (500,-56.25): panX = 400 - 500*0.8 = 0 ; panY = 300 - (-56.25)*0.8 = 345
       expect(vp.panX).toBeCloseTo(0, 5);
-      expect(vp.panY).toBeCloseTo(360, 5);
+      expect(vp.panY).toBeCloseTo(345, 5);
     });
 
     it('zoomToSelection with nothing selected leaves the Viewport untouched', () => {

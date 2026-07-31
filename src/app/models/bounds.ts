@@ -1,6 +1,7 @@
 import { GraphNode } from './node';
+import { Connection } from './connection';
 import { ViewportState, ZOOM_MIN, ZOOM_MAX } from './viewport-state';
-import { Curve } from './curve';
+import { Curve, connectionCurve, pointAt, handlePoint } from './curve';
 
 // A rectangle in Canvas units.
 export interface Bounds {
@@ -35,15 +36,73 @@ export function unionBounds(rects: readonly Bounds[]): Bounds | null {
   return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
 }
 
-/** Box enclosing a cubic bezier: the bounding box of its four control points,
- *  which the curve never leaves (convex-hull property). Encloses the whole
- *  arc, including the belly a Connection bows outside its endpoints. */
+/** Box enclosing a cubic bezier: its tight bounding box — the curve's actual
+ *  extremes (t=0, t=1, and any derivative-zero t between), not the looser
+ *  control-point hull. So a bowing Connection claims only the room its arc
+ *  really occupies. */
 export function curveBounds(curve: Curve): Bounds {
-  const xs = [curve.start.x, curve.cp1.x, curve.cp2.x, curve.end.x];
-  const ys = [curve.start.y, curve.cp1.y, curve.cp2.y, curve.end.y];
+  const ts = [
+    0, 1,
+    ...cubicExtremaTs(curve.start.x, curve.cp1.x, curve.cp2.x, curve.end.x),
+    ...cubicExtremaTs(curve.start.y, curve.cp1.y, curve.cp2.y, curve.end.y),
+  ];
+  const pts = ts.map(t => pointAt(curve, t));
+  const xs = pts.map(p => p.x);
+  const ys = pts.map(p => p.y);
   const minX = Math.min(...xs);
   const minY = Math.min(...ys);
   return { x: minX, y: minY, width: Math.max(...xs) - minX, height: Math.max(...ys) - minY };
+}
+
+// The t values in (0,1) where a 1D cubic bezier's derivative is zero — its
+// interior extrema. B'(t)/3 = a*t^2 + b*t + c.
+function cubicExtremaTs(p0: number, p1: number, p2: number, p3: number): number[] {
+  const a = -p0 + 3 * p1 - 3 * p2 + p3;
+  const b = 2 * p0 - 4 * p1 + 2 * p2;
+  const c = p1 - p0;
+  const EPS = 1e-9;
+  const inRange = (t: number): number[] => (t > 0 && t < 1 ? [t] : []);
+  if (Math.abs(a) < EPS) {
+    return Math.abs(b) < EPS ? [] : inRange(-c / b);
+  }
+  const disc = b * b - 4 * a * c;
+  if (disc < 0) return [];
+  const sq = Math.sqrt(disc);
+  return [...inRange((-b + sq) / (2 * a)), ...inRange((-b - sq) / (2 * a))];
+}
+
+/** A single Connection's curve bounds; null if either endpoint Node is absent. */
+export function connectionBounds(
+  conn: Connection,
+  nodeById: Map<string, GraphNode>,
+): Bounds | null {
+  const source = nodeById.get(conn.sourceNodeId);
+  const target = nodeById.get(conn.targetNodeId);
+  if (!source || !target) return null;
+  const curve = connectionCurve(
+    handlePoint(source, conn.sourceHandle),
+    handlePoint(target, conn.targetHandle),
+    conn.sourceHandle,
+    conn.targetHandle,
+  );
+  return curveBounds(curve);
+}
+
+/** Bounds of everything drawn — all Nodes plus every Connection's curve (which
+ *  bows outside the node box). Null when there are no Nodes. */
+export function contentBounds(
+  nodes: readonly GraphNode[],
+  connections: readonly Connection[],
+): Bounds | null {
+  const nodeBox = graphBounds(nodes);
+  if (!nodeBox) return null;
+  const nodeById = new Map(nodes.map(n => [n.id, n]));
+  const rects: Bounds[] = [nodeBox];
+  for (const conn of connections) {
+    const b = connectionBounds(conn, nodeById);
+    if (b) rects.push(b);
+  }
+  return unionBounds(rects);
 }
 
 /**

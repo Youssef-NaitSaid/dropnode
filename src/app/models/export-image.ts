@@ -1,5 +1,6 @@
 import { GraphNode } from './node';
-import { graphBounds } from './bounds';
+import { Connection } from './connection';
+import { contentBounds } from './bounds';
 
 // PNG Export capture rules (ADR-0014): full graph bounds plus fixed padding,
 // rasterized at 2x so Text stays crisp when enlarged. Independent of the
@@ -18,9 +19,13 @@ export interface ExportBounds {
   outputHeight: number;
 }
 
-/** Bounding box of all Nodes plus padding; an empty graph yields just the padded origin. */
-export function exportBounds(nodes: readonly GraphNode[]): ExportBounds {
-  const raw = graphBounds(nodes);
+/** Capture box: all Nodes and every Connection's curve plus padding; an empty
+ *  graph yields just the padded origin. */
+export function exportBounds(
+  nodes: readonly GraphNode[],
+  connections: readonly Connection[] = [],
+): ExportBounds {
+  const raw = contentBounds(nodes, connections);
   if (!raw) {
     const side = EXPORT_PADDING * 2;
     return {
