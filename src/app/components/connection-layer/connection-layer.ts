@@ -1,6 +1,6 @@
 import { Component, computed, effect, input, output, signal, ChangeDetectionStrategy, inject } from '@angular/core';
 import { GraphNode, HandleSide, NODE_PALETTE, oppositeHandle } from '../../models/node';
-import { Connection, ArrowheadType, effectiveArrowhead, effectiveTextPosition } from '../../models/connection';
+import { Connection, ArrowheadType, effectiveArrowhead, effectiveTextPosition, effectiveStrokePattern, effectiveStrokeWeight, strokeWidthPx, strokeDasharray } from '../../models/connection';
 import { Curve, connectionCurve, pointAt, textPositionFromPoint } from '../../models/curve';
 import { Text, isTextEmpty } from '../../models/text';
 import { GraphService } from '../../services/graph.service';
@@ -43,17 +43,26 @@ interface DragState {
         }
       </defs>
       @for (conn of connections(); track conn.id) {
+        <!-- Invisible solid companion path (ADR-0020): the sole pointer target,
+             so dash gaps and thin strokes never shrink the click area -->
         <path
           [attr.d]="getConnectionPath(conn)"
           [attr.data-connection-id]="conn.id"
+          class="connection-hit"
+          (mousedown)="onConnectionMouseDown(conn, $event)"
+          (dblclick)="onConnectionDoubleClick(conn, $event)"
+        />
+        <path
+          [attr.d]="getConnectionPath(conn)"
           [attr.marker-start]="markerStart(conn)"
           [attr.marker-end]="markerEnd(conn)"
           class="connection-path"
           [class.selected]="isSelected(conn.id)"
           [style.stroke]="strokeColor(conn)"
+          [style.--sw]="strokeBaseWidth(conn)"
+          [attr.stroke-dasharray]="strokeDash(conn)"
+          [attr.stroke-linecap]="strokeDash(conn) ? 'round' : null"
           [style.filter]="isSelected(conn.id) ? glowFilter(conn) : null"
-          (mousedown)="onConnectionMouseDown(conn, $event)"
-          (dblclick)="onConnectionDoubleClick(conn, $event)"
         />
       }
 
@@ -107,19 +116,30 @@ interface DragState {
       pointer-events: none;
       overflow: visible;
     }
+    .connection-hit {
+      fill: none;
+      stroke: transparent;
+      stroke-width: 12;
+      pointer-events: stroke;
+      cursor: pointer;
+    }
     .connection-path {
       fill: none;
       stroke: #7c5cff;
-      stroke-width: 2.5;
-      pointer-events: stroke;
-      cursor: pointer;
+      /* Width comes from the Stroke Weight preset (--sw, set inline); the
+         hover/selected increments are relative (ADR-0020). Rounded linecaps
+         (which draw dotted's dots) bind per path — only for dashed/dotted,
+         so default solid curves keep their pre-feature butt caps. */
+      stroke-width: calc(var(--sw, 2.5) * 1px);
+      pointer-events: none;
       transition: stroke-width 0.15s ease, filter 0.15s ease;
     }
-    .connection-path:hover {
-      stroke-width: 3.5;
+    .connection-hit:hover + .connection-path {
+      stroke-width: calc((var(--sw, 2.5) + 1) * 1px);
     }
-    .connection-path.selected {
-      stroke-width: 4;
+    .connection-path.selected,
+    .connection-hit:hover + .connection-path.selected {
+      stroke-width: calc((var(--sw, 2.5) + 1.5) * 1px);
     }
     .connection-ghost {
       fill: none;
@@ -186,6 +206,17 @@ export class ConnectionLayerComponent {
 
   strokeColor(conn: Connection): string {
     return conn.color ?? ConnectionLayerComponent.DEFAULT_STROKE;
+  }
+
+  // The at-rest curve width from the Stroke Weight preset; hover/selected
+  // increments are applied in CSS on top of this custom property
+  strokeBaseWidth(conn: Connection): number {
+    return strokeWidthPx(effectiveStrokeWeight(conn), 'base');
+  }
+
+  // Dash rhythm scales with the base width (ADR-0020); null keeps solid
+  strokeDash(conn: Connection): string | null {
+    return strokeDasharray(effectiveStrokePattern(conn), this.strokeBaseWidth(conn));
   }
 
   // A colored Connection keeps its own color when selected; the glow matches it

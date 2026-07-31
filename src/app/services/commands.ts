@@ -1,6 +1,6 @@
 import { Command } from '../models/command';
 import { GraphNode, HandleSide, oppositeHandle } from '../models/node';
-import { Connection, ArrowheadType, ArrowheadEnd, effectiveArrowhead, defaultArrowhead } from '../models/connection';
+import { Connection, ArrowheadType, ArrowheadEnd, effectiveArrowhead, defaultArrowhead, StrokePattern, StrokeWeight, effectiveStrokePattern, effectiveStrokeWeight, DEFAULT_STROKE_PATTERN, DEFAULT_STROKE_WEIGHT } from '../models/connection';
 import { Text } from '../models/text';
 import { AlignKind, DistributeAxis, RootRect, TargetPosition, alignRects, distributeRects } from '../models/align-distribute';
 import { TidyResult, applyTidyToState, isTidyEmpty, tidyLayout } from '../models/tidy-layout';
@@ -309,6 +309,52 @@ export class SetConnectionArrowheadCommand implements Command {
 
   undo(): void {
     this.graphService.setConnectionArrowhead(this.connectionId, this.end, this.originalType);
+  }
+}
+
+export class SetConnectionStrokePatternCommand implements Command {
+  description = 'Set Connection Stroke Pattern';
+  private originalPattern: StrokePattern;
+
+  constructor(
+    private graphService: GraphService,
+    private connectionId: string,
+    private newPattern: StrokePattern,
+  ) {
+    const conn = this.graphService.connections().find(c => c.id === connectionId);
+    // Capture the effective value so undo restores the exact rendered state,
+    // whether the original was stored explicitly or left at its default.
+    this.originalPattern = conn ? effectiveStrokePattern(conn) : DEFAULT_STROKE_PATTERN;
+  }
+
+  execute(): void {
+    this.graphService.setConnectionStrokePattern(this.connectionId, this.newPattern);
+  }
+
+  undo(): void {
+    this.graphService.setConnectionStrokePattern(this.connectionId, this.originalPattern);
+  }
+}
+
+export class SetConnectionStrokeWeightCommand implements Command {
+  description = 'Set Connection Stroke Weight';
+  private originalWeight: StrokeWeight;
+
+  constructor(
+    private graphService: GraphService,
+    private connectionId: string,
+    private newWeight: StrokeWeight,
+  ) {
+    const conn = this.graphService.connections().find(c => c.id === connectionId);
+    this.originalWeight = conn ? effectiveStrokeWeight(conn) : DEFAULT_STROKE_WEIGHT;
+  }
+
+  execute(): void {
+    this.graphService.setConnectionStrokeWeight(this.connectionId, this.newWeight);
+  }
+
+  undo(): void {
+    this.graphService.setConnectionStrokeWeight(this.connectionId, this.originalWeight);
   }
 }
 
@@ -673,6 +719,38 @@ export function buildSetConnectionsArrowheadCommand(
     })
     .map(id => new SetConnectionArrowheadCommand(graphService, id, end, type));
   return parts.length > 0 ? new CompoundCommand('Set Connection Arrowhead', parts) : null;
+}
+
+/** Restyle the Stroke Pattern of every given Connection as one undo step, skipping no-ops. */
+export function buildSetConnectionsStrokePatternCommand(
+  graphService: GraphService,
+  connectionIds: readonly string[],
+  pattern: StrokePattern,
+): Command | null {
+  const conns = graphService.connections();
+  const parts = connectionIds
+    .filter(id => {
+      const conn = conns.find(c => c.id === id);
+      return conn !== undefined && effectiveStrokePattern(conn) !== pattern;
+    })
+    .map(id => new SetConnectionStrokePatternCommand(graphService, id, pattern));
+  return parts.length > 0 ? new CompoundCommand('Set Connection Stroke Pattern', parts) : null;
+}
+
+/** Restyle the Stroke Weight of every given Connection as one undo step, skipping no-ops. */
+export function buildSetConnectionsStrokeWeightCommand(
+  graphService: GraphService,
+  connectionIds: readonly string[],
+  weight: StrokeWeight,
+): Command | null {
+  const conns = graphService.connections();
+  const parts = connectionIds
+    .filter(id => {
+      const conn = conns.find(c => c.id === id);
+      return conn !== undefined && effectiveStrokeWeight(conn) !== weight;
+    })
+    .map(id => new SetConnectionStrokeWeightCommand(graphService, id, weight));
+  return parts.length > 0 ? new CompoundCommand('Set Connection Stroke Weight', parts) : null;
 }
 
 // Align/Distribute participants (spec #25, ADR-0018): the Selection's roots

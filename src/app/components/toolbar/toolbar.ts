@@ -48,13 +48,15 @@ import {
   buildSetNodesColorCommand,
   buildSetConnectionsColorCommand,
   buildSetConnectionsArrowheadCommand,
+  buildSetConnectionsStrokePatternCommand,
+  buildSetConnectionsStrokeWeightCommand,
   buildAlignSelectionCommand,
   buildDistributeSelectionCommand,
   buildTidyUpCommand,
 } from '../../services/commands';
 import { AlignKind, DistributeAxis } from '../../models/align-distribute';
 import { NODE_PALETTE } from '../../models/node';
-import { ArrowheadType, ArrowheadEnd, effectiveArrowhead } from '../../models/connection';
+import { ArrowheadType, ArrowheadEnd, effectiveArrowhead, StrokePattern, StrokeWeight, effectiveStrokePattern, effectiveStrokeWeight } from '../../models/connection';
 
 @Component({
   selector: 'app-toolbar',
@@ -200,6 +202,37 @@ import { ArrowheadType, ArrowheadEnd, effectiveArrowhead } from '../../models/co
                 (click)="setArrowhead('end', opt.type)"
               >
                 <ng-icon [name]="opt.icon" />
+              </button>
+            }
+          </div>
+          <hlm-separator orientation="vertical" class="mx-1" />
+          <div class="flex items-center gap-0.5" title="Stroke pattern" aria-label="Stroke pattern">
+            @for (opt of strokePatternOptions; track opt.pattern) {
+              <button
+                class="ah-btn"
+                [class.active]="sharedStrokePattern() === opt.pattern"
+                [title]="opt.label"
+                [attr.aria-label]="opt.label + ' stroke'"
+                (click)="setStrokePattern(opt.pattern)"
+              >
+                <svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true">
+                  <path d="M2 10 H18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" [attr.stroke-dasharray]="opt.dash" />
+                </svg>
+              </button>
+            }
+          </div>
+          <div class="flex items-center gap-0.5" title="Stroke weight" aria-label="Stroke weight">
+            @for (opt of strokeWeightOptions; track opt.weight) {
+              <button
+                class="ah-btn"
+                [class.active]="sharedStrokeWeight() === opt.weight"
+                [title]="opt.label"
+                [attr.aria-label]="opt.label + ' stroke'"
+                (click)="setStrokeWeight(opt.weight)"
+              >
+                <svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true">
+                  <path d="M2 10 H18" fill="none" stroke="currentColor" [attr.stroke-width]="opt.previewWidth" stroke-linecap="round" />
+                </svg>
               </button>
             }
           </div>
@@ -367,6 +400,19 @@ export class ToolbarComponent {
   // Re-exposed for the template's active-state checks
   effectiveArrowhead = effectiveArrowhead;
 
+  // Segmented options with inline preview glyphs drawn as the stroke itself
+  strokePatternOptions: { pattern: StrokePattern; dash: string | null; label: string }[] = [
+    { pattern: 'solid', dash: null, label: 'Solid' },
+    { pattern: 'dashed', dash: '6 4', label: 'Dashed' },
+    { pattern: 'dotted', dash: '0.1 4', label: 'Dotted' },
+  ];
+
+  strokeWeightOptions: { weight: StrokeWeight; previewWidth: number; label: string }[] = [
+    { weight: 'thin', previewWidth: 1, label: 'Thin' },
+    { weight: 'normal', previewWidth: 2, label: 'Normal' },
+    { weight: 'thick', previewWidth: 3.5, label: 'Thick' },
+  ];
+
   zoomPercent = () => Math.round(this.graphService.viewportState().zoom * 100);
 
   // A styling control reads as active only when ALL its targets share the
@@ -392,6 +438,20 @@ export class ToolbarComponent {
     return conns.every(c => effectiveArrowhead(c, end) === first) ? first : undefined;
   };
 
+  sharedStrokePattern = (): StrokePattern | undefined => {
+    const conns = this.graphService.selectedConnections();
+    if (conns.length === 0) return undefined;
+    const first = effectiveStrokePattern(conns[0]);
+    return conns.every(c => effectiveStrokePattern(c) === first) ? first : undefined;
+  };
+
+  sharedStrokeWeight = (): StrokeWeight | undefined => {
+    const conns = this.graphService.selectedConnections();
+    if (conns.length === 0) return undefined;
+    const first = effectiveStrokeWeight(conns[0]);
+    return conns.every(c => effectiveStrokeWeight(c) === first) ? first : undefined;
+  };
+
   // Bulk styling (ADR-0015): one compound Command over all selected targets;
   // the factories return null when nothing would change — no dead undo steps.
   setColor(color: string | null): void {
@@ -411,6 +471,20 @@ export class ToolbarComponent {
   setArrowhead(end: ArrowheadEnd, type: ArrowheadType): void {
     const cmd = buildSetConnectionsArrowheadCommand(
       this.graphService, this.graphService.selectedConnectionIds(), end, type,
+    );
+    if (cmd) this.historyService.execute(cmd);
+  }
+
+  setStrokePattern(pattern: StrokePattern): void {
+    const cmd = buildSetConnectionsStrokePatternCommand(
+      this.graphService, this.graphService.selectedConnectionIds(), pattern,
+    );
+    if (cmd) this.historyService.execute(cmd);
+  }
+
+  setStrokeWeight(weight: StrokeWeight): void {
+    const cmd = buildSetConnectionsStrokeWeightCommand(
+      this.graphService, this.graphService.selectedConnectionIds(), weight,
     );
     if (cmd) this.historyService.execute(cmd);
   }

@@ -20,12 +20,16 @@ import {
   MoveConnectionTextCommand,
   SetConnectionColorCommand,
   SetConnectionArrowheadCommand,
+  SetConnectionStrokePatternCommand,
+  SetConnectionStrokeWeightCommand,
   InsertElementsCommand,
   QuickAddNodeCommand,
   buildDeleteSelectionCommand,
   buildSetNodesColorCommand,
   buildSetConnectionsColorCommand,
   buildSetConnectionsArrowheadCommand,
+  buildSetConnectionsStrokePatternCommand,
+  buildSetConnectionsStrokeWeightCommand,
   buildAlignSelectionCommand,
   buildDistributeSelectionCommand,
   buildTidyUpCommand,
@@ -527,6 +531,71 @@ describe('Commands', () => {
 
       cmd.undo();
       expect('endArrowhead' in graphService.connections()[0]).toBe(false);
+    });
+  });
+
+  describe('SetConnectionStrokePatternCommand / SetConnectionStrokeWeightCommand', () => {
+    function makeConn() {
+      const n1 = graphService.createNode('N1', 0, 0);
+      const n2 = graphService.createNode('N2', 100, 0);
+      return graphService.createConnection(n1.id, 'right', n2.id, 'left')!;
+    }
+
+    it('execute sets the Stroke Pattern, undo removes the field back to the solid default', () => {
+      const conn = makeConn();
+
+      const cmd = new SetConnectionStrokePatternCommand(graphService, conn.id, 'dashed');
+      cmd.execute();
+      expect(graphService.connections()[0].strokePattern).toBe('dashed');
+
+      cmd.undo();
+      expect('strokePattern' in graphService.connections()[0]).toBe(false);
+    });
+
+    it('undo restores a previously stored non-default pattern', () => {
+      const conn = makeConn();
+      graphService.setConnectionStrokePattern(conn.id, 'dotted');
+
+      const cmd = new SetConnectionStrokePatternCommand(graphService, conn.id, 'dashed');
+      cmd.execute();
+      expect(graphService.connections()[0].strokePattern).toBe('dashed');
+
+      cmd.undo();
+      expect(graphService.connections()[0].strokePattern).toBe('dotted');
+    });
+
+    it('redo (execute after undo) re-applies the pattern', () => {
+      const conn = makeConn();
+
+      const cmd = new SetConnectionStrokePatternCommand(graphService, conn.id, 'dotted');
+      cmd.execute();
+      cmd.undo();
+      cmd.execute();
+
+      expect(graphService.connections()[0].strokePattern).toBe('dotted');
+    });
+
+    it('execute sets the Stroke Weight, undo removes the field back to the normal default', () => {
+      const conn = makeConn();
+
+      const cmd = new SetConnectionStrokeWeightCommand(graphService, conn.id, 'thick');
+      cmd.execute();
+      expect(graphService.connections()[0].strokeWeight).toBe('thick');
+
+      cmd.undo();
+      expect('strokeWeight' in graphService.connections()[0]).toBe(false);
+    });
+
+    it('undo restores a previously stored non-default weight', () => {
+      const conn = makeConn();
+      graphService.setConnectionStrokeWeight(conn.id, 'thin');
+
+      const cmd = new SetConnectionStrokeWeightCommand(graphService, conn.id, 'thick');
+      cmd.execute();
+      expect(graphService.connections()[0].strokeWeight).toBe('thick');
+
+      cmd.undo();
+      expect(graphService.connections()[0].strokeWeight).toBe('thin');
     });
   });
 
@@ -1119,6 +1188,58 @@ describe('Commands', () => {
 
       // 'arrow' is the effective default at the end — already showing
       expect(buildSetConnectionsArrowheadCommand(graphService, [c1.id], 'end', 'arrow')).toBeNull();
+    });
+  });
+
+  describe('buildSetConnectionsStrokePatternCommand / buildSetConnectionsStrokeWeightCommand', () => {
+    it('restyles the pattern of all given Connections as one undo step, skipping no-ops', () => {
+      const a = graphService.createNode('A', 0, 0);
+      const b = graphService.createNode('B', 300, 0);
+      const c1 = graphService.createConnection(a.id, 'right', b.id, 'left')!;
+      const c2 = graphService.createConnection(a.id, 'top', b.id, 'top')!;
+      graphService.setConnectionStrokePattern(c2.id, 'dashed');
+
+      const cmd = buildSetConnectionsStrokePatternCommand(graphService, [c1.id, c2.id], 'dashed')!;
+      cmd.execute();
+      expect(graphService.connections().map(cn => cn.strokePattern)).toEqual(['dashed', 'dashed']);
+
+      cmd.undo();
+      // c1 reverts to its solid default (absent field); c2 keeps dashed
+      expect(graphService.connections().find(cn => cn.id === c1.id)?.strokePattern).toBeUndefined();
+      expect(graphService.connections().find(cn => cn.id === c2.id)?.strokePattern).toBe('dashed');
+    });
+
+    it('returns null when every Connection already shows the pattern', () => {
+      const a = graphService.createNode('A', 0, 0);
+      const b = graphService.createNode('B', 300, 0);
+      const c1 = graphService.createConnection(a.id, 'right', b.id, 'left')!;
+
+      // 'solid' is the effective default — already showing
+      expect(buildSetConnectionsStrokePatternCommand(graphService, [c1.id], 'solid')).toBeNull();
+    });
+
+    it('restyles the weight of all given Connections as one undo step, skipping no-ops', () => {
+      const a = graphService.createNode('A', 0, 0);
+      const b = graphService.createNode('B', 300, 0);
+      const c1 = graphService.createConnection(a.id, 'right', b.id, 'left')!;
+      const c2 = graphService.createConnection(a.id, 'top', b.id, 'top')!;
+      graphService.setConnectionStrokeWeight(c2.id, 'thick');
+
+      const cmd = buildSetConnectionsStrokeWeightCommand(graphService, [c1.id, c2.id], 'thick')!;
+      cmd.execute();
+      expect(graphService.connections().map(cn => cn.strokeWeight)).toEqual(['thick', 'thick']);
+
+      cmd.undo();
+      expect(graphService.connections().find(cn => cn.id === c1.id)?.strokeWeight).toBeUndefined();
+      expect(graphService.connections().find(cn => cn.id === c2.id)?.strokeWeight).toBe('thick');
+    });
+
+    it('returns null when every Connection already shows the weight', () => {
+      const a = graphService.createNode('A', 0, 0);
+      const b = graphService.createNode('B', 300, 0);
+      const c1 = graphService.createConnection(a.id, 'right', b.id, 'left')!;
+
+      expect(buildSetConnectionsStrokeWeightCommand(graphService, [c1.id], 'normal')).toBeNull();
     });
   });
 
