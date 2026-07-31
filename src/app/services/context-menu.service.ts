@@ -4,8 +4,9 @@ import { HistoryService } from './history.service';
 import { ClipboardService } from './clipboard.service';
 import {
   CreateNodeCommand, CreateGroupCommand, DeleteNodeCompoundCommand, DeleteConnectionCommand,
-  buildDeleteSelectionCommand,
+  buildDeleteSelectionCommand, buildAlignSelectionCommand, buildDistributeSelectionCommand,
 } from './commands';
+import { AlignKind, DistributeAxis } from '../models/align-distribute';
 
 /** What a right-click landed on, and — for the empty Canvas — nothing more. */
 export type ContextTarget =
@@ -237,6 +238,33 @@ export class ContextMenuService {
       this.graphService,
       this.graphService.selectedNodeIds(),
       this.graphService.selectedConnectionIds(),
+    );
+    if (cmd) this.historyService.execute(cmd);
+  }
+
+  // Align/Distribute (spec #25, ADR-0018): participants are the Selection's
+  // node roots — selectedNodeIds is already normalized, so its length counts
+  // them. Connections in the Selection just follow their endpoints.
+
+  readonly canAlign = computed(() => this.graphService.selectedNodeIds().length >= 2);
+  readonly canDistribute = computed(() => this.graphService.selectedNodeIds().length >= 3);
+
+  /** Align the Selection's roots as one undo step; silent no-op when flush. */
+  alignSelection(kind: AlignKind): void {
+    const cmd = buildAlignSelectionCommand(
+      this.graphService,
+      this.graphService.selectedNodeIds(),
+      kind,
+    );
+    if (cmd) this.historyService.execute(cmd);
+  }
+
+  /** Distribute the Selection's roots as one undo step; silent no-op when even. */
+  distributeSelection(axis: DistributeAxis): void {
+    const cmd = buildDistributeSelectionCommand(
+      this.graphService,
+      this.graphService.selectedNodeIds(),
+      axis,
     );
     if (cmd) this.historyService.execute(cmd);
   }

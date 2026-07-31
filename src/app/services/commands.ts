@@ -2,6 +2,7 @@ import { Command } from '../models/command';
 import { GraphNode, HandleSide, oppositeHandle } from '../models/node';
 import { Connection, ArrowheadType, ArrowheadEnd, effectiveArrowhead, defaultArrowhead } from '../models/connection';
 import { Text } from '../models/text';
+import { AlignKind, DistributeAxis, RootRect, TargetPosition, alignRects, distributeRects } from '../models/align-distribute';
 import { GraphService } from './graph.service';
 
 export class CreateNodeCommand implements Command {
@@ -671,4 +672,65 @@ export function buildSetConnectionsArrowheadCommand(
     })
     .map(id => new SetConnectionArrowheadCommand(graphService, id, end, type));
   return parts.length > 0 ? new CompoundCommand('Set Connection Arrowhead', parts) : null;
+}
+
+// Align/Distribute participants (spec #25, ADR-0018): the Selection's roots
+// only — a child whose Group is also in the set rides with the Group and is
+// never an independent rect. Groups participate as their own frame.
+function selectionRootRects(graphService: GraphService, nodeIds: readonly string[]): { roots: GraphNode[]; rects: RootRect[] } {
+  const idSet = new Set(nodeIds);
+  const roots = graphService.nodes().filter(
+    n => idSet.has(n.id) && !(n.parentId && idSet.has(n.parentId)),
+  );
+  return { roots, rects: roots.map(n => ({ id: n.id, x: n.x, y: n.y, width: n.width, height: n.height })) };
+}
+
+// One move part per target: a Group moves rigidly with its children
+// (ADR-0005) — membership is never touched (ADR-0018).
+function movePartsFor(graphService: GraphService, roots: GraphNode[], targets: TargetPosition[]): Command[] {
+  const byId = new Map(roots.map(n => [n.id, n]));
+  return targets.map(t => {
+    const node = byId.get(t.id)!;
+    return node.kind === 'group'
+      ? new MoveGroupCommand(graphService, t.id, t.x, t.y, node.x, node.y)
+      : new MoveNodeCommand(graphService, t.id, t.x, t.y);
+  });
+}
+
+const ALIGN_DESCRIPTIONS: Record<AlignKind, string> = {
+  left: 'Align left',
+  center: 'Align center',
+  right: 'Align right',
+  top: 'Align top',
+  middle: 'Align middle',
+  bottom: 'Align bottom',
+};
+
+/**
+ * Align the Selection's roots along one axis of their union box as one undo
+ * step. Roots already in place add no parts; null when nothing would move.
+ */
+export function buildAlignSelectionCommand(
+  graphService: GraphService,
+  nodeIds: readonly string[],
+  kind: AlignKind,
+): Command | null {
+  const { roots, rects } = selectionRootRects(graphService, nodeIds);
+  const parts = movePartsFor(graphService, roots, alignRects(rects, kind));
+  return parts.length > 0 ? new CompoundCommand(ALIGN_DESCRIPTIONS[kind], parts) : null;
+}
+
+/**
+ * Equalize the edge gaps between the Selection's roots along one axis as one
+ * undo step, the two outermost roots anchored. Null when nothing would move.
+ */
+export function buildDistributeSelectionCommand(
+  graphService: GraphService,
+  nodeIds: readonly string[],
+  axis: DistributeAxis,
+): Command | null {
+  const { roots, rects } = selectionRootRects(graphService, nodeIds);
+  const parts = movePartsFor(graphService, roots, distributeRects(rects, axis));
+  const description = axis === 'horizontal' ? 'Distribute horizontally' : 'Distribute vertically';
+  return parts.length > 0 ? new CompoundCommand(description, parts) : null;
 }

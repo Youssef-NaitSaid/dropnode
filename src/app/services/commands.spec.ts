@@ -26,6 +26,8 @@ import {
   buildSetNodesColorCommand,
   buildSetConnectionsColorCommand,
   buildSetConnectionsArrowheadCommand,
+  buildAlignSelectionCommand,
+  buildDistributeSelectionCommand,
 } from './commands';
 
 describe('Commands', () => {
@@ -1116,6 +1118,108 @@ describe('Commands', () => {
 
       // 'arrow' is the effective default at the end — already showing
       expect(buildSetConnectionsArrowheadCommand(graphService, [c1.id], 'end', 'arrow')).toBeNull();
+    });
+  });
+
+  describe('buildAlignSelectionCommand', () => {
+    it('aligns loose Nodes to the union left as one undo step, skipping the extreme', () => {
+      // Default 160x48 Nodes: union left is b's 50; only a moves
+      const a = graphService.createNode('A', 100, 100);
+      const b = graphService.createNode('B', 50, 200);
+
+      const cmd = buildAlignSelectionCommand(graphService, [a.id, b.id], 'left')!;
+      expect(cmd.description).toBe('Align left');
+      cmd.execute();
+
+      expect(graphService.nodes().find(n => n.id === a.id)).toMatchObject({ x: 50, y: 100 });
+      expect(graphService.nodes().find(n => n.id === b.id)).toMatchObject({ x: 50, y: 200 });
+
+      cmd.undo();
+      expect(graphService.nodes().find(n => n.id === a.id)).toMatchObject({ x: 100, y: 100 });
+    });
+
+    it('moves a Group rigidly with its children and restores both on undo', () => {
+      const group = graphService.createGroup('G', 200, 300); // 320x200
+      const child = graphService.createNode('C', 250, 350);
+      graphService.setNodeParent(child.id, group.id);
+      const loose = graphService.createNode('L', 0, 0);
+
+      // Union top is loose's 0 → the Group shifts up by 300, child riding along
+      const cmd = buildAlignSelectionCommand(graphService, [group.id, loose.id], 'top')!;
+      cmd.execute();
+
+      expect(graphService.nodes().find(n => n.id === group.id)).toMatchObject({ x: 200, y: 0 });
+      expect(graphService.nodes().find(n => n.id === child.id)).toMatchObject({ x: 250, y: 50 });
+      expect(graphService.nodes().find(n => n.id === loose.id)).toMatchObject({ x: 0, y: 0 });
+
+      cmd.undo();
+      expect(graphService.nodes().find(n => n.id === group.id)).toMatchObject({ x: 200, y: 300 });
+      expect(graphService.nodes().find(n => n.id === child.id)).toMatchObject({ x: 250, y: 350 });
+    });
+
+    it('excludes children of a selected Group from the participants', () => {
+      const group = graphService.createGroup('G', 0, 0); // leftmost already
+      const child = graphService.createNode('C', 10, 10);
+      graphService.setNodeParent(child.id, group.id);
+      const loose = graphService.createNode('L', 400, 300);
+
+      // The child id rides along in the Selection but is not a root: it must
+      // neither move on its own nor drag the union box with it
+      const cmd = buildAlignSelectionCommand(graphService, [group.id, child.id, loose.id], 'left')!;
+      cmd.execute();
+
+      expect(graphService.nodes().find(n => n.id === child.id)).toMatchObject({ x: 10, y: 10 });
+      expect(graphService.nodes().find(n => n.id === loose.id)).toMatchObject({ x: 0, y: 300 });
+    });
+
+    it('returns null when every root is already aligned', () => {
+      const a = graphService.createNode('A', 40, 0);
+      const b = graphService.createNode('B', 40, 100);
+
+      expect(buildAlignSelectionCommand(graphService, [a.id, b.id], 'left')).toBeNull();
+    });
+
+    it('returns null for fewer than two roots', () => {
+      const a = graphService.createNode('A', 0, 0);
+
+      expect(buildAlignSelectionCommand(graphService, [a.id], 'left')).toBeNull();
+      expect(buildAlignSelectionCommand(graphService, [], 'left')).toBeNull();
+    });
+  });
+
+  describe('buildDistributeSelectionCommand', () => {
+    it('equalizes horizontal gaps as one undo step, anchoring the extremes', () => {
+      // Default 160-wide Nodes at 0/190/500: anchors a and b, gap
+      // (500 − 160 − 160) / 2 = 90 → c moves to 160 + 90 = 250
+      const a = graphService.createNode('A', 0, 0);
+      const b = graphService.createNode('B', 500, 0);
+      const c = graphService.createNode('C', 190, 0);
+
+      const cmd = buildDistributeSelectionCommand(graphService, [a.id, b.id, c.id], 'horizontal')!;
+      expect(cmd.description).toBe('Distribute horizontally');
+      cmd.execute();
+
+      expect(graphService.nodes().find(n => n.id === c.id)).toMatchObject({ x: 250, y: 0 });
+      expect(graphService.nodes().find(n => n.id === a.id)).toMatchObject({ x: 0 });
+      expect(graphService.nodes().find(n => n.id === b.id)).toMatchObject({ x: 500 });
+
+      cmd.undo();
+      expect(graphService.nodes().find(n => n.id === c.id)).toMatchObject({ x: 190, y: 0 });
+    });
+
+    it('returns null for fewer than three roots', () => {
+      const a = graphService.createNode('A', 0, 0);
+      const b = graphService.createNode('B', 300, 0);
+
+      expect(buildDistributeSelectionCommand(graphService, [a.id, b.id], 'horizontal')).toBeNull();
+    });
+
+    it('returns null when the gaps are already equal', () => {
+      const a = graphService.createNode('A', 0, 0);
+      const b = graphService.createNode('B', 200, 0);
+      const c = graphService.createNode('C', 400, 0);
+
+      expect(buildDistributeSelectionCommand(graphService, [a.id, b.id, c.id], 'horizontal')).toBeNull();
     });
   });
 });

@@ -107,6 +107,11 @@
 - a dragged Group aligns by its own rect and a multi-Selection by the union of its roots; the moving set — the dragged Nodes plus any dragged Group's children — is never an alignment candidate @implemented
 - Alt+drag Duplicates align on the same drag path, with the stationary original a valid candidate @implemented
 - a Resize Grip drag aligns and snaps only its two moving edges (the dragged corner's vertical and horizontal edge) against candidates' edges and centers — the anchored edges and the resized rect's centers never participate; the Text-derived minimums and a Group's child-padding clamp override the snap, and an overridden snap shows no guide @implemented
+- Align (left/center/right/top/middle/bottom) and Distribute (horizontal/vertical) are Commands on the multi-Selection: each repositions the Selection's roots — loose Nodes and Groups as rigid units with their children, Connections following their endpoints — as one compound undo step, distinct from drag-time Alignment Snap @implemented
+- Align moves each root along one axis to an edge or center-line of the roots' union bounding box, never touching sizes or the other coordinate; roots already in place add no undo weight and a fully aligned Selection pushes nothing onto History (the factory returns null) @implemented
+- Distribute sorts the roots by center along its axis, anchors the two outermost, and equalizes the edge gaps between neighbors; center ties keep their existing order, and when the roots overflow the span the shared gap goes negative — overlap is accepted @implemented
+- Align and Distribute never change Group membership: no root is adopted into a Group it lands on and no child is orphaned by being pushed outside its Group's frame — a child may be left overhanging (ADR-0018) @implemented
+- the toolbar shows an eight-button Align/Distribute cluster while the Selection holds at least two node roots, with the two Distribute buttons disabled below three roots; the multi-Selection Context Menu carries the same eight actions in an "Align" submenu under the same rules @implemented
 
 ## viewport
 
@@ -224,7 +229,7 @@
 
 ## context menu
 
-- right-clicking opens a Context Menu scoped to its target: empty Canvas offers Add node, Add group, and Paste; a Node offers Edit text, Cut, Copy, Duplicate, and Delete; a Group offers Add node, Rename, Cut, Copy, Paste, Duplicate, and Delete; a Connection offers Edit text and Delete; a member of a multi-Selection offers Cut, Copy, Duplicate, and Delete acting on the whole set
+- right-clicking opens a Context Menu scoped to its target: empty Canvas offers Add node, Add group, and Paste; a Node offers Edit text, Cut, Copy, Duplicate, and Delete; a Group offers Add node, Rename, Cut, Copy, Paste, Duplicate, and Delete; a Connection offers Edit text and Delete; a member of a multi-Selection offers Cut, Copy, Duplicate, an Align submenu (shown with at least two node roots), and Delete acting on the whole set
 - label: the Context Menu is built on @angular/cdk/menu CdkContextMenuTrigger and reuses the styled Helm dropdown-menu content; its logic lives in ContextMenuService, never in components
   command: grep -q 'CdkContextMenuTrigger' src/app/components/canvas/canvas.ts && grep -q 'ContextMenuService' src/app/services/context-menu.service.ts
 - right-clicking a target that is part of a multi-Selection keeps the whole Selection and opens the multi menu; any other target collapses the Selection to itself before the menu opens; right-clicking empty Canvas clears the Selection and never starts a pan — panning is Space+left-drag or middle-mouse only
