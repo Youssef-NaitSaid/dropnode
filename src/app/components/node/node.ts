@@ -123,7 +123,7 @@ const GROUP_FILL_ALPHA = '4D';
     .node-card.selected {
       border-color: #7c5cff;
       box-shadow:
-        0 0 0 3px #7c5cff,
+        0 0 0 7px rgba(124, 92, 255, 0.35),
         0 8px 28px rgba(124, 92, 255, 0.55);
     }
     /* Lift a selected node (and its ring) above neighbouring cards */
