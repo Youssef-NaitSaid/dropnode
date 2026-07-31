@@ -41,7 +41,7 @@
 - double-clicking empty Canvas creates a Node with Text "New Node" centered on the cursor, as a single undo step
 - new Nodes default to 160x48; Text wraps at the Node's width, and after render the measured content raises the width floor (widest unbreakable line, 120px minimum) and height (48px minimum) but never shrinks — manual sizes are grow-only protected
 - Node auto-sizing updates go directly to GraphService and never create a History entry
-- four Resize Grips show at the corners of the selected node only; dragging one resizes with the opposite corner anchored
+- four Resize Grips show at the corners of a node only while it is the entire Selection (exactly one Node, nothing else); dragging one resizes with the opposite corner anchored
 - a grip drag clamps width and height to the Text-derived minimums (floors 120 and 48)
 - an entire grip drag is one undo step: per-mousemove size updates bypass History, and a single ResizeNodeCommand is pushed on mouseup only if the rect changed more than 2px
 - double-clicking a Node opens the Text editor with the content focused and selected; blur or Ctrl+Enter commits, Escape cancels; empty or unchanged Text is never committed
@@ -68,7 +68,7 @@
 
 - label: the palette holds exactly 8 curated colors (NODE_PALETTE); an absent color field means the default node background
   command: grep -q 'NODE_PALETTE' src/app/models/node.ts
-- a swatch row (default + 8 palette colors) appears in the toolbar center only while a node is selected; clicking a swatch is one undoable SetNodeColorCommand, and re-clicking the active swatch is a no-op
+- a swatch row (default + 8 palette colors) appears in the toolbar center while any Node is in the Selection; clicking a swatch recolors every selected Node as one compound undo step, skipping Nodes already carrying the color — a swatch reads active only when ALL selected Nodes share its value, and an all-no-op click touches nothing
 - Import rejects color values outside the palette wholesale with "Invalid node {id}: color must be a palette color"
 
 ## connections
@@ -83,8 +83,8 @@
 - a quick-add drop point inside a Group's bounds parents the spawned Node into it (topmost-rendered Group wins), except when the source is that very Group: the Node spawns unparented and the Connection is still created
 - quick-add spawn, parenting, and Connection are one undo step that also selects the spawned Node (redo re-selects); the auto-opened Text editor is UI-only — it follows the standard edit rules, commits as a separate SetNodeTextCommand, never reopens on redo, and Escape cancels only the edit
 - during a connection drag a dashed ghost bezier renders from the source Handle to the cursor
-- clicking a Connection path or its Text card selects the Connection; Delete or Backspace deletes the selected Connection as one undoable Command
-- selection is exclusive: at most one element (Node or Connection) is selected at a time — selecting one kind deselects the other, and clicking empty Canvas or pressing Escape clears whichever is selected
+- clicking a Connection path or its Text card selects the Connection; Delete or Backspace deletes it as one undoable Command; Ctrl+click toggles its Selection membership instead
+- the Connection swatch and Arrowhead rows show while any Connection is in the Selection and restyle every selected Connection as one compound undo step; a control reads active only when ALL selected Connections share its value
 - a Connection carries optional Text; double-clicking the path or Text card opens the Text editor at the Text's position on the curve with the content focused and selected — blur or Ctrl+Enter commits, Escape cancels, and committing empty removes the Text (deliberate deviation from the Node rule)
 - setting or clearing Connection Text is one undoable SetConnectionTextCommand; committing unchanged content pushes nothing onto History; createConnection never sets Text
 - Connection Text renders on an opaque wrapping card (max-width 240px) centered at its position along the cubic bezier (default: the midpoint), moving with the curve; the card is part of the Connection's hit area
@@ -101,13 +101,25 @@
 - zoom is clamped to the range 0.1 to 5
 - wheel zoom steps by 0.1 per tick, centered on the cursor so the point under the cursor stays fixed on screen
 - toolbar zoom buttons step by 0.1 centered at origin (0,0), not at the screen center — this differs from wheel zoom
-- mousedown-drag on empty Canvas pans the Viewport and deselects the current Node
+- left-drag on empty Canvas draws a Marquee, not a pan (ADR-0016); panning is hold-Space + left-drag (grab cursor, from anywhere, even over elements) or middle-mouse-drag, and never changes the Selection
 - reset view restores pan (0,0) and zoom 1; importing or clearing a graph does NOT reset the Viewport
 - pan and zoom apply as one shared CSS translate+scale transform covering both the DOM node layer and the SVG connection layer
 - Zoom to fit frames the whole graph — all Nodes (Groups included) unioned with every Connection's curve bounds so a bowing curve is never clipped — into 90% of the visible Canvas, centered on both axes, never magnifying past 1x; an empty graph is a silent no-op @spec
 - Zoom to selection frames the selected element — a Node by its rect, a Group unioned with its children, a Connection by its cubic bezier bounds (the control-point box, which encloses the bow) — into 90% of the Viewport, centered, magnifying no further than 2x; no selection is a silent no-op @spec
 - Zoom to fit and Zoom to selection are bounds-centered — a third zoom-centering behavior alongside cursor-centered wheel zoom and origin-centered toolbar buttons; both write pan+zoom instantly within the [0.1,5] clamp, add no History entry, and persist via the normal Viewport auto-save @spec
 - the toolbar zoom cluster carries a Zoom to fit button distinct from Reset View; Zoom to selection is keyboard-only, with no toolbar button or Context Menu entry @spec
+
+## selection
+
+- the Selection is a set freely mixing Nodes and Connections — empty, one, or many (ADR-0015); it is transient interaction state, never serialized into Graph State, exports, or share links
+- a Group is selected as a unit: its children ride along implicitly and are never Selection members beside their own Group (the set normalizes them away); a child is individually selectable only while its Group is not selected
+- a Marquee (empty-Canvas left-drag past the 2px threshold) selects by touch: a Node by rect overlap, a Group via its own or any child's rect, a Connection when the rect touches its sampled curve or its Text card; touched elements highlight live and the Selection commits on mouseup
+- a plain Marquee replaces the Selection; Ctrl+Marquee adds the touched elements to the pre-drag Selection; a sub-2px press-release is a click — plain clears the Selection, with Ctrl it is a no-op
+- plain-click on an unselected element collapses the Selection to it; Ctrl+click toggles membership; mousedown on a member of a multi-Selection keeps the set and arms a drag — releasing without a drag collapses to that element (deferred collapse)
+- Ctrl+A selects every Group (as a unit), every loose Node, and every Connection
+- dragging any member moves the whole Selection rigidly — every root shifts by the same delta, Connections follow their endpoints — as one compound undo step; Group membership is frozen during a multi-Selection drag (single-element drags keep the center-point join-on-drop rule)
+- Delete/Backspace on a multi-Selection removes everything as one compound undo step: explicitly selected Connections, each Node with its cascaded Connections, and a selected Group together WITH its children (deliberate divergence — a single-Group Delete still releases them); undo restores all original ids
+- a Selection of exactly one element behaves exactly as single-select always did — grips, editors, menus, and membership rules are unchanged
 
 ## history
 
@@ -179,31 +191,31 @@
 ## shortcuts
 
 - all keyboard shortcuts are ignored while focus is in an input, textarea, or contenteditable element
-- Delete or Backspace deletes the selected element — a Connection alone, or a Node with its Connections; Escape deselects and blurs the active element
-- Ctrl+X cuts and Ctrl+C copies the selected Node or Group; Ctrl+V pastes at the cursor; Ctrl+D duplicates the selected Node or Group — no selection (or an empty Clipboard for paste) is a silent no-op
+- Delete or Backspace deletes the Selection — a single Connection or Node exactly as before, a multi-Selection as one compound step; Escape clears the whole Selection and blurs the active element
+- Ctrl+X cuts and Ctrl+C copies the Selection's Nodes and Groups; Ctrl+V pastes at the cursor; Ctrl+D duplicates the Selection's Nodes and Groups; Ctrl+A selects all — no selection (or an empty Clipboard for paste) is a silent no-op
 - Shift+1 runs Zoom to fit and Shift+2 Zoom to selection, keyed off event.code (Digit1/Digit2) for layout independence and suppressed by the input-focus guard @spec
 
 ## clipboard
 
-- the Clipboard is in-memory, single-entry, and session-scoped (ADR-0011): it holds the most recently Cut or Copied element and is lost on reload; the OS clipboard is never used for graph elements
-- Cut, Copy, and Duplicate apply to Nodes and Groups only — Connections offer no clipboard actions
-- copying a Group captures the Group, its children, and only Connections with BOTH endpoints inside the captured set; the snapshot is a deep clone isolated from later edits
+- the Clipboard is in-memory, single-entry, and session-scoped (ADR-0011): it holds the most recently Cut or Copied Selection and is lost on reload; the OS clipboard is never used for graph elements
+- Cut, Copy, and Duplicate apply to Nodes and Groups only — a Selection with no Node offers them as silent no-ops
+- copying a Selection captures its Nodes, each selected Group's children, and only Connections with BOTH endpoints inside the captured set — a selected Connection with an endpoint outside is silently dropped from the copy; the snapshot is a deep clone isolated from later edits
 - Copy keeps the original selected and never touches History
-- Cut removes the captured set plus every touching Connection as one compound undo step — unlike Delete, cutting a Group removes its children instead of releasing them; undo restores original ids while the Clipboard keeps the copy
-- Paste regenerates all ids in the node_/conn_ patterns and remaps parentId and Connection endpoints; pasting the same entry twice yields two independent copies
+- Cut removes the captured set plus every touching Connection — and any explicitly selected dangling Connection, though it is never copied — as one compound undo step; unlike Delete, cutting a Group removes its children instead of releasing them; undo restores original ids while the Clipboard keeps the copy
+- Paste regenerates all ids in the node_/conn_ patterns and remaps parentId and Connection endpoints; pasting the same entry twice yields two independent copies; a multi-element paste recenters the set's bounding box on the paste point
 - menu Paste centers the copy on the right-click point; Paste on a Group's menu parents pasted regular nodes into that Group; a pasted Group never nests; Canvas paste strips parentId
 - the Paste menu item renders disabled while the Clipboard is empty (the menu shape stays stable)
 - Ctrl+V pastes centered on the tracked cursor position; repeated pastes without moving the mouse cascade by +24,+24 and moving the cursor resets the cascade
-- Duplicate (menu item or Ctrl+D) creates the copy at +24,+24 keeping the original's parentId (a sibling), as one undo step, without reading or writing the Clipboard
-- holding Alt at drag start spawns a duplicate that the drag moves — the original never moves and mid-drag Alt changes are ignored; drop membership follows the normal containment rule and the whole gesture is one undo step; without >2px movement the spawn is aborted
-- after Paste, Duplicate, or an Alt+drag drop the new copy is selected (the Group node when a Group was copied); Cut leaves nothing selected
+- Duplicate (menu item or Ctrl+D) copies the Selection's Nodes and Groups at +24,+24, each root keeping its original parentId (a sibling), as one undo step, without reading or writing the Clipboard
+- holding Alt at drag start spawns a duplicate of the whole dragged Selection that the drag moves — the originals never move and mid-drag Alt changes are ignored; a single spawned node takes membership by the normal containment rule while a spawned set keeps membership frozen, the whole gesture is one undo step, and without >2px movement the spawn is aborted (restoring the source Selection)
+- after Paste, Duplicate, or an Alt+drag drop the new copies become the Selection (inserted Group children stay implicit); Cut leaves nothing selected
 
 ## context menu
 
-- right-clicking opens a Context Menu scoped to its target: empty Canvas offers Add node, Add group, and Paste; a Node offers Edit text, Cut, Copy, Duplicate, and Delete; a Group offers Add node, Rename, Cut, Copy, Paste, Duplicate, and Delete; a Connection offers Edit text and Delete
+- right-clicking opens a Context Menu scoped to its target: empty Canvas offers Add node, Add group, and Paste; a Node offers Edit text, Cut, Copy, Duplicate, and Delete; a Group offers Add node, Rename, Cut, Copy, Paste, Duplicate, and Delete; a Connection offers Edit text and Delete; a member of a multi-Selection offers Cut, Copy, Duplicate, and Delete acting on the whole set
 - label: the Context Menu is built on @angular/cdk/menu CdkContextMenuTrigger and reuses the styled Helm dropdown-menu content; its logic lives in ContextMenuService, never in components
   command: grep -q 'CdkContextMenuTrigger' src/app/components/canvas/canvas.ts && grep -q 'ContextMenuService' src/app/services/context-menu.service.ts
-- right-clicking a target selects it before the menu opens (exclusive selection applies); right-clicking empty Canvas clears the selection and never starts a pan — panning is left-button only
+- right-clicking a target that is part of a multi-Selection keeps the whole Selection and opens the multi menu; any other target collapses the Selection to itself before the menu opens; right-clicking empty Canvas clears the Selection and never starts a pan — panning is Space+left-drag or middle-mouse only
 - Add node and Add group create centered on the right-click point (Node offset 60/24, Group offset 160/100); Add node on a Group creates a child of that Group at the point
 - menu Edit text opens the target Node's or Connection's Text editor; menu Rename opens a Group's inline Label editor — all reuse the double-click editors and their commit rules
 - menu Delete runs the same Commands as the Delete/Backspace shortcut, with identical cascade and undo behavior; opening or dismissing a menu never touches History

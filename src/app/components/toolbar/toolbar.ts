@@ -34,9 +34,14 @@ import { ExportService } from '../../services/export.service';
 import { CollectionService } from '../../services/collection.service';
 import { ImportDialogService } from '../../services/import-dialog.service';
 import { ExportDialogService } from '../../services/export-dialog.service';
-import { CreateGroupCommand, SetNodeColorCommand, SetConnectionColorCommand, SetConnectionArrowheadCommand } from '../../services/commands';
+import {
+  CreateGroupCommand,
+  buildSetNodesColorCommand,
+  buildSetConnectionsColorCommand,
+  buildSetConnectionsArrowheadCommand,
+} from '../../services/commands';
 import { NODE_PALETTE } from '../../models/node';
-import { Connection, ArrowheadType, ArrowheadEnd, effectiveArrowhead } from '../../models/connection';
+import { ArrowheadType, ArrowheadEnd, effectiveArrowhead } from '../../models/connection';
 
 @Component({
   selector: 'app-toolbar',
@@ -77,12 +82,12 @@ import { Connection, ArrowheadType, ArrowheadEnd, effectiveArrowhead } from '../
         <button hlmBtn variant="ghost" size="icon" (click)="redo()" [disabled]="!historyService.canRedo()" title="Redo (Ctrl+Shift+Z)" aria-label="Redo">
           <ng-icon name="lucideRedo2" />
         </button>
-        @if (graphService.selectedNodeId(); as selectedId) {
+        @if (graphService.selectedNodes().length > 0) {
           <hlm-separator orientation="vertical" class="mx-1" />
           <div class="flex items-center gap-1.5" title="Background color">
             <button
               class="swatch swatch-default"
-              [class.active]="!selectedColor()"
+              [class.active]="sharedNodeColor() === null"
               title="Default"
               aria-label="Default color"
               (click)="setColor(null)"
@@ -90,7 +95,7 @@ import { Connection, ArrowheadType, ArrowheadEnd, effectiveArrowhead } from '../
             @for (color of palette; track color) {
               <button
                 class="swatch"
-                [class.active]="selectedColor() === color"
+                [class.active]="sharedNodeColor() === color"
                 [style.background]="color"
                 [title]="color"
                 [attr.aria-label]="color"
@@ -99,12 +104,12 @@ import { Connection, ArrowheadType, ArrowheadEnd, effectiveArrowhead } from '../
             }
           </div>
         }
-        @if (selectedConnection(); as conn) {
+        @if (graphService.selectedConnections().length > 0) {
           <hlm-separator orientation="vertical" class="mx-1" />
           <div class="flex items-center gap-1.5" title="Connection color">
             <button
               class="swatch swatch-default"
-              [class.active]="!conn.color"
+              [class.active]="sharedConnectionColor() === null"
               title="Default"
               aria-label="Default color"
               (click)="setConnectionColor(null)"
@@ -112,7 +117,7 @@ import { Connection, ArrowheadType, ArrowheadEnd, effectiveArrowhead } from '../
             @for (color of palette; track color) {
               <button
                 class="swatch"
-                [class.active]="conn.color === color"
+                [class.active]="sharedConnectionColor() === color"
                 [style.background]="color"
                 [title]="color"
                 [attr.aria-label]="color"
@@ -125,7 +130,7 @@ import { Connection, ArrowheadType, ArrowheadEnd, effectiveArrowhead } from '../
             @for (opt of arrowheadOptions; track opt.type) {
               <button
                 class="ah-btn"
-                [class.active]="effectiveArrowhead(conn, 'start') === opt.type"
+                [class.active]="sharedArrowhead('start') === opt.type"
                 [title]="opt.label"
                 [attr.aria-label]="'Start ' + opt.label"
                 (click)="setArrowhead('start', opt.type)"
@@ -138,7 +143,7 @@ import { Connection, ArrowheadType, ArrowheadEnd, effectiveArrowhead } from '../
             @for (opt of arrowheadOptions; track opt.type) {
               <button
                 class="ah-btn"
-                [class.active]="effectiveArrowhead(conn, 'end') === opt.type"
+                [class.active]="sharedArrowhead('end') === opt.type"
                 [title]="opt.label"
                 [attr.aria-label]="'End ' + opt.label"
                 (click)="setArrowhead('end', opt.type)"
@@ -310,34 +315,50 @@ export class ToolbarComponent {
 
   zoomPercent = () => Math.round(this.graphService.viewportState().zoom * 100);
 
-  selectedColor = () => this.graphService.selectedNode()?.color ?? null;
-
-  setColor(color: string | null): void {
-    const selectedId = this.graphService.selectedNodeId();
-    if (!selectedId) return;
-    if ((this.graphService.selectedNode()?.color ?? null) === color) return;
-    this.historyService.execute(new SetNodeColorCommand(this.graphService, selectedId, color));
-  }
-
-  // The Connection currently selected, or null. Styling controls bind to this.
-  selectedConnection = (): Connection | null => {
-    const id = this.graphService.selectedConnectionId();
-    return id ? this.graphService.connections().find(c => c.id === id) ?? null : null;
+  // A styling control reads as active only when ALL its targets share the
+  // value (ADR-0015); undefined means a mixed set — nothing highlights.
+  sharedNodeColor = (): string | null | undefined => {
+    const nodes = this.graphService.selectedNodes();
+    if (nodes.length === 0) return undefined;
+    const first = nodes[0].color ?? null;
+    return nodes.every(n => (n.color ?? null) === first) ? first : undefined;
   };
 
+  sharedConnectionColor = (): string | null | undefined => {
+    const conns = this.graphService.selectedConnections();
+    if (conns.length === 0) return undefined;
+    const first = conns[0].color ?? null;
+    return conns.every(c => (c.color ?? null) === first) ? first : undefined;
+  };
+
+  sharedArrowhead = (end: ArrowheadEnd): ArrowheadType | undefined => {
+    const conns = this.graphService.selectedConnections();
+    if (conns.length === 0) return undefined;
+    const first = effectiveArrowhead(conns[0], end);
+    return conns.every(c => effectiveArrowhead(c, end) === first) ? first : undefined;
+  };
+
+  // Bulk styling (ADR-0015): one compound Command over all selected targets;
+  // the factories return null when nothing would change — no dead undo steps.
+  setColor(color: string | null): void {
+    const cmd = buildSetNodesColorCommand(
+      this.graphService, this.graphService.selectedNodeIds(), color,
+    );
+    if (cmd) this.historyService.execute(cmd);
+  }
+
   setConnectionColor(color: string | null): void {
-    const conn = this.selectedConnection();
-    if (!conn) return;
-    if ((conn.color ?? null) === color) return;
-    this.historyService.execute(new SetConnectionColorCommand(this.graphService, conn.id, color));
+    const cmd = buildSetConnectionsColorCommand(
+      this.graphService, this.graphService.selectedConnectionIds(), color,
+    );
+    if (cmd) this.historyService.execute(cmd);
   }
 
   setArrowhead(end: ArrowheadEnd, type: ArrowheadType): void {
-    const conn = this.selectedConnection();
-    if (!conn) return;
-    // Clicking the already-effective value is a no-op — no Command, no History
-    if (effectiveArrowhead(conn, end) === type) return;
-    this.historyService.execute(new SetConnectionArrowheadCommand(this.graphService, conn.id, end, type));
+    const cmd = buildSetConnectionsArrowheadCommand(
+      this.graphService, this.graphService.selectedConnectionIds(), end, type,
+    );
+    if (cmd) this.historyService.execute(cmd);
   }
 
   addGroup(): void {

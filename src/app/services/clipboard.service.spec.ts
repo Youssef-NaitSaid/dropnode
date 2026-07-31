@@ -394,4 +394,108 @@ describe('ClipboardService', () => {
       expect(graphService.nodes().length).toBe(2);
     });
   });
+
+  // Multi-Selection Clipboard (ADR-0015): the entry generalizes to a set;
+  // it stays single-entry and in-memory (ADR-0011).
+  describe('Selection sets', () => {
+    it('copies a set of Nodes plus only Connections with BOTH endpoints inside; danglers are dropped', () => {
+      const a = graphService.createNode('A', 0, 0);
+      const b = graphService.createNode('B', 300, 0);
+      const out = graphService.createNode('Out', 900, 0);
+      const inner = graphService.createConnection(a.id, 'right', b.id, 'left')!;
+      graphService.createConnection(b.id, 'right', out.id, 'left'); // dangler
+
+      service.copy([a.id, b.id]);
+      service.pasteAt(2000, 2000);
+
+      // 3 originals + 2 pasted; only the internal Connection was duplicated
+      expect(graphService.nodes().length).toBe(5);
+      expect(graphService.connections().length).toBe(3);
+      const pastedConn = graphService.connections().find(
+        c => c.id !== inner.id && !c.targetNodeId.includes(out.id),
+      );
+      expect(pastedConn).toBeDefined();
+    });
+
+    it('paste selects everything pasted and recenters the set bounding box on the point', () => {
+      const a = graphService.createNode('A', 0, 0); // bbox 0..160
+      const b = graphService.createNode('B', 340, 0); // bbox 340..500, so center x = 250
+      service.copy([a.id, b.id]);
+
+      service.pasteAt(1000, 1000);
+
+      const pasted = graphService.nodes().filter(n => n.id !== a.id && n.id !== b.id);
+      expect(pasted.length).toBe(2);
+      // Set center (250, 24) lands on (1000, 1000): every node shifts +750, +976
+      expect(pasted.map(n => n.x).sort((x, y) => x - y)).toEqual([750, 1090]);
+      expect(graphService.selectedNodeIds().sort()).toEqual(pasted.map(n => n.id).sort());
+    });
+
+    it('a Group root in a set copy still brings its children', () => {
+      const group = graphService.createGroup('G', 0, 0, 400, 300);
+      const child = graphService.createNode('C', 20, 20);
+      graphService.setNodeParent(child.id, group.id);
+      const loose = graphService.createNode('L', 600, 0);
+
+      service.copy([group.id, loose.id]);
+      service.pasteAt(2000, 2000);
+
+      expect(graphService.nodes().length).toBe(6);
+      const pastedGroup = graphService.nodes().find(n => n.kind === 'group' && n.id !== group.id)!;
+      expect(graphService.nodes().filter(n => n.parentId === pastedGroup.id).length).toBe(1);
+    });
+
+    it('cut removes the whole set (a Group WITH children) plus explicitly selected danglers, one undo step', () => {
+      const a = graphService.createNode('A', 0, 0);
+      const group = graphService.createGroup('G', 300, 0, 400, 300);
+      const child = graphService.createNode('C', 320, 20);
+      graphService.setNodeParent(child.id, group.id);
+      const out = graphService.createNode('Out', 900, 0);
+      const dangler = graphService.createConnection(a.id, 'right', out.id, 'left')!;
+
+      service.cut([a.id, group.id], [dangler.id]);
+
+      expect(graphService.nodes().map(n => n.id)).toEqual([out.id]);
+      expect(graphService.connections()).toEqual([]);
+
+      historyService.undo();
+      expect(graphService.nodes().length).toBe(4);
+      expect(graphService.connections().map(c => c.id)).toEqual([dangler.id]);
+      expect(graphService.nodes().find(n => n.id === child.id)?.parentId).toBe(group.id);
+    });
+
+    it('duplicating a set keeps each root a sibling (original parentId preserved)', () => {
+      const group = graphService.createGroup('G', 0, 0, 400, 300);
+      const child = graphService.createNode('C', 20, 20);
+      graphService.setNodeParent(child.id, group.id);
+
+      // Duplicate the child alone: the copy stays inside the Group
+      service.duplicate([child.id]);
+
+      const copy = graphService.nodes().find(n => n.id !== group.id && n.id !== child.id)!;
+      expect(copy.parentId).toBe(group.id);
+      expect(copy.x).toBe(44);
+    });
+
+    it('spawnDuplicate copies the whole set and reports the copy of the grabbed Node', () => {
+      const a = graphService.createNode('A', 0, 0);
+      const b = graphService.createNode('B', 300, 0);
+      graphService.setSelection([a.id, b.id], []);
+
+      const spawn = service.spawnDuplicate([a.id, b.id], b.id)!;
+
+      expect(spawn.rootIds.length).toBe(2);
+      expect(graphService.nodes().length).toBe(4);
+      // primaryId is the copy of the grabbed node, at b's position
+      const primary = graphService.nodes().find(n => n.id === spawn.primaryId)!;
+      expect(primary.x).toBe(300);
+      // the copies became the Selection
+      expect(graphService.selectedNodeIds().sort()).toEqual([...spawn.rootIds].sort());
+
+      service.cancelSpawnedDuplicate();
+      expect(graphService.nodes().length).toBe(2);
+      // an aborted spawn restores the source Selection
+      expect(graphService.selectedNodeIds().sort()).toEqual([a.id, b.id].sort());
+    });
+  });
 });

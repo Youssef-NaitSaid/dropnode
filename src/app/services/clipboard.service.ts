@@ -3,14 +3,16 @@ import { GraphNode } from '../models/node';
 import { Connection } from '../models/connection';
 import { GraphService } from './graph.service';
 import { HistoryService } from './history.service';
-import { CompoundCommand, DeleteNodeCommand, InsertElementsCommand } from './commands';
+import { CompoundCommand, DeleteNodeCommand, DeleteConnectionCommand, InsertElementsCommand } from './commands';
+import { Command } from '../models/command';
 
-// A captured set of elements plus the root (the copied Node or Group) whose
-// copy gets selected after a paste.
+// A captured Selection: the top-level roots (Nodes and Groups) whose copies
+// re-form the Selection after a paste, plus every rider (Group children and
+// internal Connections).
 interface ClipboardEntry {
   nodes: GraphNode[];
   connections: Connection[];
-  rootId: string;
+  rootIds: string[];
 }
 
 // Duplicate stagger and repeat-paste cascade step, in canvas units
@@ -18,8 +20,9 @@ const DUPLICATE_OFFSET = 24;
 
 /**
  * The Clipboard (ADR-0011): an in-memory, single-entry, session-scoped
- * holding area for the most recently Cut or Copied Node or Group. Duplicate
- * lives here too but never reads or writes the Clipboard entry.
+ * holding area for the most recently Cut or Copied Selection of Nodes and
+ * Groups (ADR-0015). Duplicate lives here too but never reads or writes the
+ * Clipboard entry.
  */
 @Injectable({ providedIn: 'root' })
 export class ClipboardService {
@@ -42,35 +45,50 @@ export class ClipboardService {
 
   // A pending Alt+drag duplicate, created transiently and committed on drop
   private spawned: {
-    nodes: GraphNode[]; connections: Connection[]; rootId: string; sourceId: string;
+    nodes: GraphNode[]; connections: Connection[]; rootIds: string[]; sourceIds: string[];
   } | null = null;
 
   /**
-   * Capture a Node — or a Group with its children and internal Connections —
-   * onto the Clipboard. No graph mutation, nothing on History.
+   * Capture a Selection of Nodes and Groups — each Group with its children,
+   * plus Connections whose BOTH endpoints are inside the captured set (a
+   * dangling selected Connection is silently dropped) — onto the Clipboard.
+   * No graph mutation, nothing on History.
    */
-  copy(nodeId: string): void {
-    const captured = this.capture(nodeId);
+  copy(nodeIds: string | readonly string[]): void {
+    const captured = this.capture(toArray(nodeIds));
     if (captured) this.entry.set(captured);
   }
 
   /**
-   * Capture like copy, then remove the captured set plus every Connection
-   * touching any member, as one compound undo step. Unlike Delete, cutting
-   * a Group removes its children instead of releasing them.
+   * Capture like copy, then remove the captured set — plus every Connection
+   * touching any member and every explicitly selected Connection — as one
+   * compound undo step. Unlike Delete, cutting a Group removes its children
+   * instead of releasing them.
    */
-  cut(nodeId: string): void {
-    const captured = this.capture(nodeId);
+  cut(nodeIds: string | readonly string[], connectionIds: readonly string[] = []): void {
+    const roots = toArray(nodeIds);
+    const captured = this.capture(roots);
     if (!captured) return;
     this.entry.set(captured);
 
-    // Children first, then the root: each DeleteNodeCommand captures its own
-    // Connections, and reverse-order undo restores the Group before the
-    // children re-claim their parentId.
-    const parts = captured.nodes
-      .filter(n => n.id !== nodeId)
-      .map(n => new DeleteNodeCommand(this.graphService, n.id));
-    parts.push(new DeleteNodeCommand(this.graphService, nodeId));
+    // Explicitly selected Connections first (a dangler is deleted even though
+    // it isn't copied); then per root: children first, then the root — each
+    // DeleteNodeCommand captures its own cascaded Connections, and
+    // reverse-order undo restores a Group before its children re-claim their
+    // parentId.
+    const parts: Command[] = connectionIds.map(
+      id => new DeleteConnectionCommand(this.graphService, id),
+    );
+    const childIds = new Set(captured.nodes.map(n => n.id));
+    for (const rootId of captured.rootIds) childIds.delete(rootId);
+    for (const rootId of captured.rootIds) {
+      for (const node of captured.nodes) {
+        if (node.parentId === rootId && childIds.has(node.id)) {
+          parts.push(new DeleteNodeCommand(this.graphService, node.id));
+        }
+      }
+      parts.push(new DeleteNodeCommand(this.graphService, rootId));
+    }
     this.historyService.execute(new CompoundCommand('Cut', parts));
   }
 
@@ -83,7 +101,7 @@ export class ClipboardService {
     const entry = this.entry();
     if (!entry) return;
 
-    const materialized = this.materialize(entry, parentGroupId);
+    const materialized = this.materialize(entry, { parentGroupId });
     const bounds = this.boundsOf(materialized.nodes);
     const dx = x - (bounds.minX + bounds.maxX) / 2;
     const dy = y - (bounds.minY + bounds.maxY) / 2;
@@ -93,7 +111,7 @@ export class ClipboardService {
     }
 
     this.historyService.execute(new InsertElementsCommand(
-      this.graphService, 'Paste', materialized.nodes, materialized.connections, materialized.rootId,
+      this.graphService, 'Paste', materialized.nodes, materialized.connections,
     ));
   }
 
@@ -133,34 +151,46 @@ export class ClipboardService {
   }
 
   /**
-   * Duplicate: an immediate copy at +24,+24 keeping the original's parentId
-   * (a sibling), selected, one undo step. Never reads or writes the Clipboard.
+   * Duplicate: an immediate copy of the Selection at +24,+24, each root
+   * keeping its original parentId (a sibling), selected, one undo step.
+   * Never reads or writes the Clipboard.
    */
-  duplicate(nodeId: string): void {
-    const materialized = this.materializeLiveCopy(nodeId, DUPLICATE_OFFSET, DUPLICATE_OFFSET);
+  duplicate(nodeIds: string | readonly string[]): void {
+    const materialized = this.materializeLiveCopy(toArray(nodeIds), DUPLICATE_OFFSET, DUPLICATE_OFFSET);
     if (!materialized) return;
     this.historyService.execute(new InsertElementsCommand(
-      this.graphService, 'Duplicate', materialized.nodes, materialized.connections, materialized.rootId,
+      this.graphService, 'Duplicate', materialized.nodes, materialized.connections,
     ));
   }
 
   /**
-   * Alt+drag start: spawn the copy at the source position and select it —
-   * the drag then moves the copy transiently. Nothing on History until
-   * commitSpawnedDuplicate records the drop.
+   * Alt+drag start: spawn a copy of the whole Selection at the source
+   * position and select the copies — the drag then moves them transiently.
+   * Nothing on History until commitSpawnedDuplicate records the drop.
    */
-  spawnDuplicate(nodeId: string): { primaryId: string; isGroup: boolean } | null {
-    const materialized = this.materializeLiveCopy(nodeId, 0, 0);
+  spawnDuplicate(
+    nodeIds: string | readonly string[],
+    grabbedId?: string,
+  ): { primaryId: string; rootIds: string[]; isGroup: boolean } | null {
+    const sourceIds = toArray(nodeIds);
+    const materialized = this.materializeLiveCopy(sourceIds, 0, 0);
     if (!materialized) return null;
 
-    this.spawned = { ...materialized, sourceId: nodeId };
+    this.spawned = {
+      nodes: materialized.nodes,
+      connections: materialized.connections,
+      rootIds: materialized.rootIds,
+      sourceIds,
+    };
     this.graphService.nodes.update(nodes => [...nodes, ...materialized.nodes]);
     if (materialized.connections.length > 0) {
       this.graphService.connections.update(conns => [...conns, ...materialized.connections]);
     }
-    this.graphService.selectNode(materialized.rootId);
-    const isGroup = materialized.nodes.find(n => n.id === materialized.rootId)?.kind === 'group';
-    return { primaryId: materialized.rootId, isGroup };
+    this.graphService.setSelection(materialized.rootIds, []);
+
+    const primaryId = materialized.idMap.get(grabbedId ?? sourceIds[0]) ?? materialized.rootIds[0];
+    const isGroup = materialized.nodes.find(n => n.id === primaryId)?.kind === 'group';
+    return { primaryId, rootIds: materialized.rootIds, isGroup };
   }
 
   /**
@@ -178,7 +208,7 @@ export class ClipboardService {
     const nodes = this.graphService.nodes().filter(n => nodeIds.has(n.id));
     const connections = this.graphService.connections().filter(c => connIds.has(c.id));
     this.historyService.pushWithoutExecute(new InsertElementsCommand(
-      this.graphService, 'Duplicate', nodes, connections, spawned.rootId,
+      this.graphService, 'Duplicate', nodes, connections,
     ));
   }
 
@@ -196,23 +226,22 @@ export class ClipboardService {
     const connIds = new Set(spawned.connections.map(c => c.id));
     this.graphService.nodes.update(nodes => nodes.filter(n => !nodeIds.has(n.id)));
     this.graphService.connections.update(conns => conns.filter(c => !connIds.has(c.id)));
-    if (nodeIds.has(this.graphService.selectedNodeId() ?? '')) {
-      this.graphService.selectNode(spawned.sourceId);
+    if (spawned.rootIds.some(id => this.graphService.isNodeSelected(id))) {
+      this.graphService.setSelection(spawned.sourceIds, []);
     }
   }
 
-  // Capture the live element (not the Clipboard) and materialize a copy
-  // offset by dx/dy; the root keeps its live parentId (sibling semantics).
+  // Capture the live Selection (not the Clipboard) and materialize a copy
+  // offset by dx/dy; each root keeps its live parentId (sibling semantics).
   private materializeLiveCopy(
-    nodeId: string,
+    nodeIds: readonly string[],
     dx: number,
     dy: number,
-  ): { nodes: GraphNode[]; connections: Connection[]; rootId: string } | null {
-    const root = this.graphService.nodes().find(n => n.id === nodeId);
-    if (!root) return null;
+  ): { nodes: GraphNode[]; connections: Connection[]; rootIds: string[]; idMap: Map<string, string> } | null {
+    const captured = this.capture(nodeIds);
+    if (!captured) return null;
 
-    const captured = this.capture(nodeId)!;
-    const materialized = this.materialize(captured, root.parentId);
+    const materialized = this.materialize(captured, { preserveOutsideParents: true });
     for (const node of materialized.nodes) {
       node.x += dx;
       node.y += dy;
@@ -220,30 +249,43 @@ export class ClipboardService {
     return materialized;
   }
 
-  // Deep-cloned capture of the target Node, or the Group plus its children
-  // and Connections whose BOTH endpoints are inside the captured set.
-  private capture(nodeId: string): ClipboardEntry | null {
-    const root = this.graphService.nodes().find(n => n.id === nodeId);
-    if (!root) return null;
+  // Deep-cloned capture of the Selection roots: each Group brings its
+  // children, and only Connections with BOTH endpoints inside the captured
+  // set travel (danglers are dropped). A root whose own Group is also a root
+  // is folded into that Group (group-as-unit).
+  private capture(nodeIds: readonly string[]): ClipboardEntry | null {
+    const byId = new Map(this.graphService.nodes().map(n => [n.id, n]));
+    const rootSet = new Set(nodeIds.filter(id => byId.has(id)));
+    const roots = [...rootSet]
+      .map(id => byId.get(id)!)
+      .filter(n => !(n.parentId && rootSet.has(n.parentId)));
+    if (roots.length === 0) return null;
 
-    const nodes = root.kind === 'group'
-      ? [root, ...this.graphService.childrenOf(root.id)]
-      : [root];
+    const nodes: GraphNode[] = [];
+    for (const root of roots) {
+      nodes.push(root);
+      if (root.kind === 'group') {
+        // A child listed alongside its own Group was folded out of roots
+        // above, so bringing every child here can't duplicate it
+        nodes.push(...this.graphService.childrenOf(root.id));
+      }
+    }
     const ids = new Set(nodes.map(n => n.id));
     const connections = this.graphService.connections().filter(
       c => ids.has(c.sourceNodeId) && ids.has(c.targetNodeId),
     );
 
-    return structuredClone({ nodes, connections, rootId: root.id });
+    return structuredClone({ nodes, connections, rootIds: roots.map(r => r.id) });
   }
 
   // Fresh ids for every element, internal references remapped; parentId is
-  // remapped when its Group is in the set, else replaced by parentGroupId
-  // (Group paste-target) or stripped (Canvas paste).
+  // remapped when its Group is in the set, else kept (Duplicate's sibling
+  // semantics), replaced by parentGroupId (Group paste-target), or stripped
+  // (Canvas paste).
   private materialize(
     entry: ClipboardEntry,
-    parentGroupId?: string,
-  ): { nodes: GraphNode[]; connections: Connection[]; rootId: string } {
+    opts: { parentGroupId?: string; preserveOutsideParents?: boolean } = {},
+  ): { nodes: GraphNode[]; connections: Connection[]; rootIds: string[]; idMap: Map<string, string> } {
     const cloned: ClipboardEntry = structuredClone(entry);
     const idMap = new Map<string, string>();
     for (const node of cloned.nodes) {
@@ -255,8 +297,10 @@ export class ClipboardService {
       const remapped: GraphNode = { ...rest, id: idMap.get(node.id)! };
       if (parentId && idMap.has(parentId)) {
         remapped.parentId = idMap.get(parentId);
-      } else if (parentGroupId && remapped.kind !== 'group') {
-        remapped.parentId = parentGroupId;
+      } else if (parentId && opts.preserveOutsideParents) {
+        remapped.parentId = parentId;
+      } else if (opts.parentGroupId && remapped.kind !== 'group') {
+        remapped.parentId = opts.parentGroupId;
       }
       return remapped;
     });
@@ -268,7 +312,12 @@ export class ClipboardService {
       targetNodeId: idMap.get(conn.targetNodeId)!,
     }));
 
-    return { nodes, connections, rootId: idMap.get(entry.rootId)! };
+    return {
+      nodes,
+      connections,
+      rootIds: entry.rootIds.map(id => idMap.get(id)!),
+      idMap,
+    };
   }
 
   private boundsOf(nodes: GraphNode[]): { minX: number; minY: number; maxX: number; maxY: number } {
@@ -279,4 +328,8 @@ export class ClipboardService {
       maxY: Math.max(...nodes.map(n => n.y + n.height)),
     };
   }
+}
+
+function toArray(nodeIds: string | readonly string[]): string[] {
+  return typeof nodeIds === 'string' ? [nodeIds] : [...nodeIds];
 }

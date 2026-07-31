@@ -31,8 +31,9 @@ import {
 } from '../../services/commands';
 import { NodeComponent, GripCorner } from '../node/node';
 import { ConnectionLayerComponent } from '../connection-layer/connection-layer';
-import { HandleSide } from '../../models/node';
+import { HandleSide, GraphNode } from '../../models/node';
 import { TEXT_POSITION_DEFAULT } from '../../models/connection';
+import { Rect, normalizedRect, marqueeSelection } from '../../models/marquee';
 import { Text } from '../../models/text';
 
 @Component({
@@ -54,6 +55,7 @@ import { Text } from '../../models/text';
       <div
         class="canvas-container"
         [class.panning]="isPanning"
+        [class.space-pan]="spaceHeld()"
         (dblclick)="onCanvasDoubleClick($event)"
         (mousedown)="onCanvasMouseDown($event)"
         (contextmenu)="onContextMenu($event)"
@@ -69,7 +71,8 @@ import { Text } from '../../models/text';
             @for (node of groupNodes(); track node.id) {
               <app-node
                 [node]="node"
-                [isSelected]="graphService.selectedNodeId() === node.id"
+                [isSelected]="graphService.isNodeSelected(node.id)"
+                [soleSelected]="graphService.selectedNodeId() === node.id"
                 [snapTarget]="currentSnapTarget"
                 (startMove)="onNodeStartMove($event)"
                 (rename)="onNodeRename($event)"
@@ -93,7 +96,8 @@ import { Text } from '../../models/text';
             @for (node of regularNodes(); track node.id) {
               <app-node
                 [node]="node"
-                [isSelected]="graphService.selectedNodeId() === node.id"
+                [isSelected]="graphService.isNodeSelected(node.id)"
+                [soleSelected]="graphService.selectedNodeId() === node.id"
                 [snapTarget]="currentSnapTarget"
                 (startMove)="onNodeStartMove($event)"
                 (rename)="onNodeRename($event)"
@@ -105,6 +109,18 @@ import { Text } from '../../models/text';
               />
             }
           </div>
+
+          <!-- The Marquee rectangle (ADR-0016), in canvas coordinates inside
+               the shared transform so it scales with the graph -->
+          @if (marqueeRect(); as rect) {
+            <div
+              class="marquee-rect"
+              [style.left.px]="rect.x"
+              [style.top.px]="rect.y"
+              [style.width.px]="rect.width"
+              [style.height.px]="rect.height"
+            ></div>
+          }
         </div>
       </div>
     </div>
@@ -175,6 +191,24 @@ import { Text } from '../../models/text';
               <span>Delete</span>
             </button>
           }
+          @case ('multi') {
+            <button hlmDropdownMenuItem (triggered)="contextMenuService.cutSelection()">
+              <ng-icon name="lucideScissors" />
+              <span>Cut</span>
+            </button>
+            <button hlmDropdownMenuItem (triggered)="contextMenuService.copySelection()">
+              <ng-icon name="lucideCopy" />
+              <span>Copy</span>
+            </button>
+            <button hlmDropdownMenuItem (triggered)="contextMenuService.duplicateSelection()">
+              <ng-icon name="lucideCopyPlus" />
+              <span>Duplicate</span>
+            </button>
+            <button hlmDropdownMenuItem variant="destructive" (triggered)="contextMenuService.deleteSelection()">
+              <ng-icon name="lucideTrash2" />
+              <span>Delete</span>
+            </button>
+          }
         }
       </div>
     </ng-template>
@@ -199,10 +233,20 @@ import { Text } from '../../models/text';
       background-size: 26px 26px;
       position: relative;
       overflow: hidden;
+      cursor: default;
+    }
+    .canvas-container.space-pan {
       cursor: grab;
     }
     .canvas-container.panning {
       cursor: grabbing;
+    }
+    .marquee-rect {
+      position: absolute;
+      border: 1px solid #7c5cff;
+      background: rgba(124, 92, 255, 0.12);
+      pointer-events: none;
+      z-index: 10;
     }
     .canvas-transform {
       position: absolute;
@@ -238,16 +282,18 @@ export class CanvasComponent {
   groupNodes = computed(() => this.graphService.nodes().filter(n => n.kind === 'group'));
   regularNodes = computed(() => this.graphService.nodes().filter(n => n.kind !== 'group'));
 
-  // Node drag state
+  // Node drag state — a drag moves one or many roots (the whole Selection
+  // when a member was grabbed, ADR-0015) rigidly by the same delta
   private isDraggingNode = false;
-  private dragNodeId: string | null = null;
+  private dragRoots: { id: string; startX: number; startY: number; isGroup: boolean }[] = [];
   private dragStartX = 0;
   private dragStartY = 0;
-  private dragNodeStartX = 0;
-  private dragNodeStartY = 0;
   private hasMoved = false;
-  private dragIsGroup = false;
-  // True while dragging an Alt+drag-spawned duplicate instead of the original
+  // True when the drag grabbed a member of a multi-Selection: membership is
+  // frozen on drop, and a no-move release collapses to the grabbed element
+  private dragIsSelectionDrag = false;
+  private dragCollapseToId: string | null = null;
+  // True while dragging Alt+drag-spawned duplicates instead of the originals
   private dragIsSpawnedDuplicate = false;
 
   // Resize drag state
@@ -260,12 +306,24 @@ export class CanvasComponent {
   private resizeMinHeight = 48;
   private resizeStartRect: NodeRect | null = null;
 
-  // Pan state
+  // Pan state (ADR-0016: Space+drag and middle-mouse-drag; empty-canvas
+  // left-drag is the Marquee)
   protected isPanning = false;
   private panStartX = 0;
   private panStartY = 0;
   private panStartPanX = 0;
   private panStartPanY = 0;
+  readonly spaceHeld = signal(false);
+
+  // Marquee state (ADR-0016) — armed on empty-canvas left-mousedown, active
+  // past the 2px threshold; below it the release is a click
+  private isMarqueeArmed = false;
+  private marqueeActive = false;
+  private marqueeAdditive = false;
+  private marqueeStartClientX = 0;
+  private marqueeStartClientY = 0;
+  private marqueeBase: { nodeIds: readonly string[]; connectionIds: readonly string[] } | null = null;
+  readonly marqueeRect = signal<Rect | null>(null);
 
   // Connection drag state — track source info for CreateConnectionCommand on drop;
   // the moved flag is the standard 2px (canvas-unit) guard that keeps a stray
@@ -323,19 +381,58 @@ export class CanvasComponent {
   }
 
   onCanvasMouseDown(event: MouseEvent): void {
+    // Middle-mouse-drag pans from anywhere; Space turns a left-drag into a
+    // pan even over elements (ADR-0016)
+    if (event.button === 1 || (event.button === 0 && this.spaceHeld())) {
+      event.preventDefault();
+      this.startPan(event);
+      return;
+    }
     if ((event.target as HTMLElement).closest('app-node')) return;
     // Left button only — right-click is reserved for the context menu and
-    // must never start a pan or clear selection (the menu handles that)
+    // must never start a Marquee or clear selection (the menu handles that)
     if (event.button !== 0) return;
 
+    // Arm a Marquee; whether it becomes one (drag) or stays a click (clear,
+    // or Ctrl no-op) is resolved by the 2px threshold
+    this.isMarqueeArmed = true;
+    this.marqueeActive = false;
+    this.marqueeAdditive = event.ctrlKey;
+    this.marqueeStartClientX = event.clientX;
+    this.marqueeStartClientY = event.clientY;
+    this.marqueeBase = event.ctrlKey
+      ? {
+          nodeIds: this.graphService.selectedNodeIds(),
+          connectionIds: this.graphService.selectedConnectionIds(),
+        }
+      : null;
+  }
+
+  private startPan(event: MouseEvent): void {
     this.isPanning = true;
     this.panStartX = event.clientX;
     this.panStartY = event.clientY;
     const vp = this.graphService.viewportState();
     this.panStartPanX = vp.panX;
     this.panStartPanY = vp.panY;
+  }
 
-    this.graphService.selectNode(null);
+  // Space tracking for the pan gesture; ignored while typing so the editors
+  // keep their spacebar
+  @HostListener('document:keydown', ['$event'])
+  onDocumentKeyDown(event: KeyboardEvent): void {
+    if (event.code !== 'Space') return;
+    const target = event.target as HTMLElement;
+    if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) return;
+    event.preventDefault(); // keep the page (and focused buttons) inert
+    this.spaceHeld.set(true);
+  }
+
+  @HostListener('document:keyup', ['$event'])
+  onDocumentKeyUp(event: KeyboardEvent): void {
+    if (event.code === 'Space') {
+      this.spaceHeld.set(false);
+    }
   }
 
   // Right-click: select the target and prime the context menu with the
@@ -378,30 +475,55 @@ export class CanvasComponent {
 
   // Node drag handling
   onNodeStartMove(event: { nodeId: string; event: MouseEvent }): void {
-    // Alt at drag start spawns a Duplicate: the drag moves the copy and the
-    // original never moves. Mid-drag Alt changes are deliberately ignored.
-    let nodeId = event.nodeId;
+    // Space+drag pans even when the press lands on a node (ADR-0016)
+    if (this.spaceHeld()) {
+      this.startPan(event.event);
+      return;
+    }
+
+    // Ctrl+click toggles Selection membership and never arms a drag
+    if (event.event.ctrlKey && !event.event.altKey) {
+      this.graphService.toggleNodeSelection(event.nodeId);
+      return;
+    }
+
+    // Grabbing a member of a multi-Selection drags the whole set; releasing
+    // without a drag collapses to the grabbed element (deferred collapse).
+    // Anything else collapses immediately and drags alone.
+    this.dragIsSelectionDrag = false;
+    this.dragCollapseToId = null;
+    let rootIds: readonly string[];
+    if (this.graphService.isNodeSelected(event.nodeId) && this.graphService.selectionSize() > 1) {
+      rootIds = this.graphService.selectedNodeIds();
+      this.dragIsSelectionDrag = true;
+      this.dragCollapseToId = event.nodeId;
+    } else {
+      this.graphService.selectNode(event.nodeId);
+      rootIds = [event.nodeId];
+    }
+
+    // Alt at drag start spawns a Duplicate of the dragged set: the drag moves
+    // the copies and the originals never move. Mid-drag Alt changes are
+    // deliberately ignored.
     this.dragIsSpawnedDuplicate = false;
     if (event.event.altKey) {
-      const spawn = this.clipboardService.spawnDuplicate(event.nodeId);
+      const spawn = this.clipboardService.spawnDuplicate(rootIds, event.nodeId);
       if (spawn) {
-        nodeId = spawn.primaryId;
+        rootIds = spawn.rootIds;
         this.dragIsSpawnedDuplicate = true;
+        this.dragCollapseToId = null;
       }
     }
 
     this.isDraggingNode = true;
-    this.dragNodeId = nodeId;
     this.dragStartX = event.event.clientX;
     this.dragStartY = event.event.clientY;
-    const node = this.graphService.nodes().find(n => n.id === nodeId);
-    if (node) {
-      this.dragNodeStartX = node.x;
-      this.dragNodeStartY = node.y;
-      this.dragIsGroup = node.kind === 'group';
-    }
+    const byId = new Map(this.graphService.nodes().map(n => [n.id, n]));
+    this.dragRoots = rootIds
+      .map(id => byId.get(id))
+      .filter((n): n is GraphNode => n !== undefined)
+      .map(n => ({ id: n.id, startX: n.x, startY: n.y, isGroup: n.kind === 'group' }));
     this.hasMoved = false;
-    this.graphService.selectNode(nodeId);
   }
 
   // Resize grip drag start
@@ -455,7 +577,7 @@ export class CanvasComponent {
     // lazily when Ctrl+V actually pastes, keeping this hot path cheap
     this.clipboardService.setCursorPosition(event.clientX, event.clientY);
 
-    if (this.isDraggingNode && this.dragNodeId) {
+    if (this.isDraggingNode && this.dragRoots.length > 0) {
       const vp = this.graphService.viewportState();
       const dx = (event.clientX - this.dragStartX) / vp.zoom;
       const dy = (event.clientY - this.dragStartY) / vp.zoom;
@@ -464,13 +586,43 @@ export class CanvasComponent {
         this.hasMoved = true;
       }
 
-      const newX = this.dragNodeStartX + dx;
-      const newY = this.dragNodeStartY + dy;
-      if (this.dragIsGroup) {
-        // Rigid move: children follow the Group, still bypassing History
-        this.graphService.moveGroup(this.dragNodeId, newX, newY);
-      } else {
-        this.graphService.updateNodePosition(this.dragNodeId, newX, newY);
+      // Rigid translate: every root shifts by the same delta, bypassing
+      // History; Connections follow their endpoints
+      for (const root of this.dragRoots) {
+        const newX = root.startX + dx;
+        const newY = root.startY + dy;
+        if (root.isGroup) {
+          this.graphService.moveGroup(root.id, newX, newY);
+        } else {
+          this.graphService.updateNodePosition(root.id, newX, newY);
+        }
+      }
+    }
+
+    // Marquee: past the 2px threshold the rect renders and the Selection
+    // live-updates — replace, or union with the pre-drag set on Shift
+    if (this.isMarqueeArmed) {
+      const dx = event.clientX - this.marqueeStartClientX;
+      const dy = event.clientY - this.marqueeStartClientY;
+      if (!this.marqueeActive && (Math.abs(dx) > 2 || Math.abs(dy) > 2)) {
+        this.marqueeActive = true;
+      }
+      if (this.marqueeActive) {
+        const start = this.clientPointToCanvas(this.marqueeStartClientX, this.marqueeStartClientY);
+        const current = this.clientPointToCanvas(event.clientX, event.clientY);
+        if (start && current) {
+          const rect = normalizedRect(start, current);
+          this.marqueeRect.set(rect);
+          const hit = marqueeSelection(this.graphService.nodes(), this.graphService.connections(), rect);
+          if (this.marqueeAdditive && this.marqueeBase) {
+            this.graphService.setSelection(
+              [...this.marqueeBase.nodeIds, ...hit.nodeIds],
+              [...this.marqueeBase.connectionIds, ...hit.connectionIds],
+            );
+          } else {
+            this.graphService.setSelection(hit.nodeIds, hit.connectionIds);
+          }
+        }
       }
     }
 
@@ -541,85 +693,123 @@ export class CanvasComponent {
 
   @HostListener('document:mouseup', ['$event'])
   onMouseUp(event: MouseEvent): void {
+    // Resolve a Marquee first: an active one already committed its Selection
+    // live; below the threshold the press was a click — plain clears, Shift
+    // leaves the Selection unchanged
+    if (this.isMarqueeArmed) {
+      if (!this.marqueeActive && !this.marqueeAdditive) {
+        this.graphService.clearSelection();
+      }
+      this.isMarqueeArmed = false;
+      this.marqueeActive = false;
+      this.marqueeBase = null;
+      this.marqueeRect.set(null);
+    }
+
     // Finish an Alt+drag duplicate — the whole gesture is one undo step.
     // Without movement the spawn is aborted (mirroring the 2px move rule).
-    if (this.isDraggingNode && this.dragNodeId && this.dragIsSpawnedDuplicate) {
+    if (this.isDraggingNode && this.dragIsSpawnedDuplicate) {
       if (!this.hasMoved) {
         this.clipboardService.cancelSpawnedDuplicate();
       } else {
-        const node = this.graphService.nodes().find(n => n.id === this.dragNodeId);
-        if (node && !this.dragIsGroup) {
-          // Membership by drop position, same containment rule as a move;
-          // transient here — the commit snapshots it into the undo step
+        // Membership by drop position for a single spawned regular node only;
+        // a spawned set keeps membership frozen like any multi-move
+        if (this.dragRoots.length === 1 && !this.dragRoots[0].isGroup) {
+          const node = this.graphService.nodes().find(n => n.id === this.dragRoots[0].id);
+          if (node) {
+            const targetGroup = this.graphService.findGroupAt(
+              node.x + node.width / 2,
+              node.y + node.height / 2,
+              node.id,
+            );
+            this.graphService.setNodeParent(node.id, targetGroup?.id ?? null);
+          }
+        }
+        this.clipboardService.commitSpawnedDuplicate();
+      }
+    } else if (this.isDraggingNode && this.hasMoved && this.dragRoots.length > 0) {
+      if (this.dragRoots.length > 1 || this.dragIsSelectionDrag) {
+        // Multi-Selection drag: one compound undo step, membership frozen
+        const byId = new Map(this.graphService.nodes().map(n => [n.id, n]));
+        const parts = this.dragRoots
+          .map(root => {
+            const node = byId.get(root.id);
+            if (!node) return null;
+            return root.isGroup
+              ? new MoveGroupCommand(this.graphService, root.id, node.x, node.y, root.startX, root.startY)
+              : new MoveNodeCommand(this.graphService, root.id, node.x, node.y, root.startX, root.startY);
+          })
+          .filter((cmd): cmd is MoveGroupCommand | MoveNodeCommand => cmd !== null);
+        if (parts.length > 0) {
+          this.historyService.pushWithoutExecute(new CompoundCommand('Move Selection', parts));
+        }
+      } else {
+        const root = this.dragRoots[0];
+        const node = this.graphService.nodes().find(n => n.id === root.id);
+        if (node && root.isGroup) {
+          // A Group drag moved its children rigidly; one undo step for all of it
+          const cmd = new MoveGroupCommand(
+            this.graphService,
+            root.id,
+            node.x,
+            node.y,
+            root.startX,
+            root.startY,
+          );
+          this.historyService.pushWithoutExecute(cmd);
+        } else if (node) {
+          // Node is already at the new position. Membership follows containment:
+          // the topmost Group under the node's center claims it on drop.
           const targetGroup = this.graphService.findGroupAt(
             node.x + node.width / 2,
             node.y + node.height / 2,
             node.id,
           );
-          this.graphService.setNodeParent(node.id, targetGroup?.id ?? null);
-        }
-        this.clipboardService.commitSpawnedDuplicate();
-      }
-    } else if (this.isDraggingNode && this.dragNodeId && this.hasMoved) {
-      const node = this.graphService.nodes().find(n => n.id === this.dragNodeId);
-      if (node && this.dragIsGroup) {
-        // A Group drag moved its children rigidly; one undo step for all of it
-        const cmd = new MoveGroupCommand(
-          this.graphService,
-          this.dragNodeId,
-          node.x,
-          node.y,
-          this.dragNodeStartX,
-          this.dragNodeStartY,
-        );
-        this.historyService.pushWithoutExecute(cmd);
-      } else if (node) {
-        // Node is already at the new position. Membership follows containment:
-        // the topmost Group under the node's center claims it on drop.
-        const targetGroup = this.graphService.findGroupAt(
-          node.x + node.width / 2,
-          node.y + node.height / 2,
-          node.id,
-        );
-        const newParentId = targetGroup?.id ?? null;
-        const oldParentId = node.parentId ?? null;
+          const newParentId = targetGroup?.id ?? null;
+          const oldParentId = node.parentId ?? null;
 
-        const moveCmd = new MoveNodeCommand(
-          this.graphService,
-          this.dragNodeId,
-          node.x,
-          node.y,
-          this.dragNodeStartX,
-          this.dragNodeStartY,
-        );
-
-        if (newParentId === oldParentId) {
-          this.historyService.pushWithoutExecute(moveCmd);
-        } else {
-          // Entering a Group severs any Connections to it (sever-on-entry),
-          // all one compound undo step with the move and the membership change
-          const severCmds = newParentId === null ? [] : this.graphService.connections()
-            .filter(c =>
-              (c.sourceNodeId === node.id && c.targetNodeId === newParentId) ||
-              (c.sourceNodeId === newParentId && c.targetNodeId === node.id)
-            )
-            .map(c => new DeleteConnectionCommand(this.graphService, c.id));
-          const parentCmd = new ChangeParentCommand(this.graphService, node.id, newParentId);
-
-          // The move already happened transiently; apply the remaining parts,
-          // then push the compound without re-executing
-          severCmds.forEach(c => c.execute());
-          parentCmd.execute();
-          this.historyService.pushWithoutExecute(
-            new CompoundCommand('Move Node', [moveCmd, ...severCmds, parentCmd])
+          const moveCmd = new MoveNodeCommand(
+            this.graphService,
+            root.id,
+            node.x,
+            node.y,
+            root.startX,
+            root.startY,
           );
+
+          if (newParentId === oldParentId) {
+            this.historyService.pushWithoutExecute(moveCmd);
+          } else {
+            // Entering a Group severs any Connections to it (sever-on-entry),
+            // all one compound undo step with the move and the membership change
+            const severCmds = newParentId === null ? [] : this.graphService.connections()
+              .filter(c =>
+                (c.sourceNodeId === node.id && c.targetNodeId === newParentId) ||
+                (c.sourceNodeId === newParentId && c.targetNodeId === node.id)
+              )
+              .map(c => new DeleteConnectionCommand(this.graphService, c.id));
+            const parentCmd = new ChangeParentCommand(this.graphService, node.id, newParentId);
+
+            // The move already happened transiently; apply the remaining parts,
+            // then push the compound without re-executing
+            severCmds.forEach(c => c.execute());
+            parentCmd.execute();
+            this.historyService.pushWithoutExecute(
+              new CompoundCommand('Move Node', [moveCmd, ...severCmds, parentCmd])
+            );
+          }
         }
       }
+    } else if (this.isDraggingNode && !this.hasMoved && this.dragCollapseToId) {
+      // Deferred collapse: a plain click on a Selection member — without a
+      // drag — collapses the Selection to just that element
+      this.graphService.selectNode(this.dragCollapseToId);
     }
     this.isDraggingNode = false;
-    this.dragNodeId = null;
+    this.dragRoots = [];
     this.hasMoved = false;
-    this.dragIsGroup = false;
+    this.dragIsSelectionDrag = false;
+    this.dragCollapseToId = null;
     this.dragIsSpawnedDuplicate = false;
 
     // Finish resize drag — one undo step, only if the final rect actually changed
@@ -746,8 +936,14 @@ export class CanvasComponent {
     this.historyService.execute(cmd);
   }
 
-  onConnectionSelect(connectionId: string): void {
-    this.graphService.selectConnection(connectionId);
+  // Plain click on a Connection collapses the Selection to it; Ctrl+click
+  // toggles its membership (the layer already filtered to left-button)
+  onConnectionSelect(event: { connectionId: string; additive: boolean }): void {
+    if (event.additive) {
+      this.graphService.toggleConnectionSelection(event.connectionId);
+    } else {
+      this.graphService.selectConnection(event.connectionId);
+    }
   }
 
   onConnectionTextCommit(event: { connectionId: string; newText: Text | null }): void {

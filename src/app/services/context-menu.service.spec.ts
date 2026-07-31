@@ -357,4 +357,92 @@ describe('ContextMenuService', () => {
       expect(clipboardService.canPaste()).toBe(true);
     });
   });
+
+  // Selection-aware menu (ADR-0015): right-clicking a member keeps the set
+  // and offers the multi menu; a non-member collapses to a single target.
+  describe('multi-Selection menu', () => {
+    function makeSet() {
+      const a = graphService.createNode('A', 0, 0);
+      const b = graphService.createNode('B', 300, 0);
+      const c = graphService.createNode('C', 600, 0);
+      graphService.setSelection([a.id, b.id], []);
+      return { a, b, c };
+    }
+
+    it('right-click on a Selection member keeps the whole Selection and shows the multi menu', () => {
+      const { a, b } = makeSet();
+
+      service.openFor({ kind: 'node', nodeId: a.id }, 10, 10);
+
+      expect(graphService.selectedNodeIds()).toEqual([a.id, b.id]);
+      expect(service.menuKind()).toBe('multi');
+    });
+
+    it('right-click on a non-member collapses the Selection to it and shows the single menu', () => {
+      const { c } = makeSet();
+
+      service.openFor({ kind: 'node', nodeId: c.id }, 10, 10);
+
+      expect(graphService.selectedNodeIds()).toEqual([c.id]);
+      expect(service.menuKind()).toBe('node');
+    });
+
+    it('right-click on a selected Connection member of a mixed set keeps it and shows the multi menu', () => {
+      const { a, b } = makeSet();
+      const conn = graphService.createConnection(a.id, 'right', b.id, 'left')!;
+      graphService.setSelection([a.id], [conn.id]);
+
+      service.openFor({ kind: 'connection', connectionId: conn.id }, 10, 10);
+
+      expect(graphService.selectedConnectionIds()).toEqual([conn.id]);
+      expect(graphService.selectedNodeIds()).toEqual([a.id]);
+      expect(service.menuKind()).toBe('multi');
+    });
+
+    it('a single-element Selection still shows the single-target menu', () => {
+      const { a } = makeSet();
+      graphService.selectNode(a.id);
+
+      service.openFor({ kind: 'node', nodeId: a.id }, 10, 10);
+
+      expect(service.menuKind()).toBe('node');
+    });
+
+    it('deleteSelection removes the whole set as one undo step', () => {
+      const { a, b, c } = makeSet();
+      service.openFor({ kind: 'node', nodeId: a.id }, 10, 10);
+
+      service.deleteSelection();
+
+      expect(graphService.nodes().map(n => n.id)).toEqual([c.id]);
+      historyService.undo();
+      expect(graphService.nodes().map(n => n.id).sort()).toEqual([a.id, b.id, c.id].sort());
+    });
+
+    it('copySelection + pasteHere yields copies of the whole set', () => {
+      const { a, b } = makeSet();
+      service.openFor({ kind: 'node', nodeId: a.id }, 10, 10);
+
+      service.copySelection();
+      service.openFor({ kind: 'canvas' }, 2000, 2000);
+      service.pasteHere();
+
+      expect(graphService.nodes().length).toBe(5);
+      expect(graphService.selectedNodeIds().length).toBe(2);
+      expect(graphService.isNodeSelected(a.id)).toBe(false);
+      expect(graphService.isNodeSelected(b.id)).toBe(false);
+    });
+
+    it('cutSelection with no Node in the Selection is a silent no-op', () => {
+      const { a, b } = makeSet();
+      const conn = graphService.createConnection(a.id, 'right', b.id, 'left')!;
+      graphService.setSelection([], [conn.id]);
+      service.openFor({ kind: 'connection', connectionId: conn.id }, 10, 10);
+
+      service.cutSelection();
+
+      expect(graphService.connections().length).toBe(1);
+      expect(historyService.canUndo()).toBe(false);
+    });
+  });
 });

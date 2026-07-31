@@ -20,14 +20,43 @@ export class GraphService {
   readonly nodes = signal<GraphNode[]>([]);
   readonly connections = signal<Connection[]>([]);
   readonly viewportState = signal<ViewportState>({ panX: 0, panY: 0, zoom: 1 });
-  readonly selectedNodeId = signal<string | null>(null);
-  readonly selectedConnectionId = signal<string | null>(null);
+
+  // The Selection (ADR-0015): one set freely mixing Nodes and Connections.
+  // Transient interaction state — never part of Graph State or exports.
+  readonly selectedNodeIds = signal<readonly string[]>([]);
+  readonly selectedConnectionIds = signal<readonly string[]>([]);
 
   // Computed signals
   readonly nodeCount = computed(() => this.nodes().length);
+  readonly selectionSize = computed(
+    () => this.selectedNodeIds().length + this.selectedConnectionIds().length,
+  );
+  // Sole-selection views: the id only when exactly one element of that kind
+  // is the entire Selection — what grips, inline editors, and single-element
+  // affordances key off.
+  readonly selectedNodeId = computed(() => {
+    const nodeIds = this.selectedNodeIds();
+    return nodeIds.length === 1 && this.selectedConnectionIds().length === 0
+      ? nodeIds[0]
+      : null;
+  });
+  readonly selectedConnectionId = computed(() => {
+    const connIds = this.selectedConnectionIds();
+    return connIds.length === 1 && this.selectedNodeIds().length === 0
+      ? connIds[0]
+      : null;
+  });
   readonly selectedNode = computed(() => {
     const id = this.selectedNodeId();
     return id ? this.nodes().find(n => n.id === id) ?? null : null;
+  });
+  readonly selectedNodes = computed(() => {
+    const ids = new Set(this.selectedNodeIds());
+    return this.nodes().filter(n => ids.has(n.id));
+  });
+  readonly selectedConnections = computed(() => {
+    const ids = new Set(this.selectedConnectionIds());
+    return this.connections().filter(c => ids.has(c.id));
   });
 
   private idCounter = 0;
@@ -226,8 +255,11 @@ export class GraphService {
         })
     );
 
-    if (this.selectedNodeId() === id) {
-      this.selectedNodeId.set(null);
+    // Prune the deleted Node and its cascaded Connections from the Selection
+    this.selectedNodeIds.update(ids => ids.filter(nodeId => nodeId !== id));
+    if (removedConnections.length > 0) {
+      const removedIds = new Set(removedConnections.map(c => c.id));
+      this.selectedConnectionIds.update(ids => ids.filter(connId => !removedIds.has(connId)));
     }
 
     return { node, removedConnections, releasedChildIds };
@@ -272,9 +304,7 @@ export class GraphService {
     const conn = this.connections().find(c => c.id === id);
     if (!conn) return undefined;
     this.connections.update(conns => conns.filter(c => c.id !== id));
-    if (this.selectedConnectionId() === id) {
-      this.selectedConnectionId.set(null);
-    }
+    this.selectedConnectionIds.update(ids => ids.filter(connId => connId !== id));
     return conn;
   }
 
@@ -351,15 +381,83 @@ export class GraphService {
     );
   }
 
-  // Selection is exclusive: at most one element (Node or Connection) at a time
+  // Selection (ADR-0015): one set freely mixing Nodes and Connections. The
+  // set is normalized so a Group and its own children are never both members
+  // (group-as-unit — children ride along implicitly).
+
+  /** Replace the Selection with a single Node (null clears the Selection). */
   selectNode(id: string | null): void {
-    this.selectedNodeId.set(id);
-    this.selectedConnectionId.set(null);
+    this.selectedNodeIds.set(id === null ? [] : [id]);
+    this.selectedConnectionIds.set([]);
   }
 
+  /** Replace the Selection with a single Connection. */
   selectConnection(id: string): void {
-    this.selectedConnectionId.set(id);
-    this.selectedNodeId.set(null);
+    this.selectedConnectionIds.set([id]);
+    this.selectedNodeIds.set([]);
+  }
+
+  /** Replace the whole Selection with the given (normalized) set. */
+  setSelection(nodeIds: readonly string[], connectionIds: readonly string[]): void {
+    this.selectedNodeIds.set(this.normalizeNodeSelection(nodeIds));
+    this.selectedConnectionIds.set([...new Set(connectionIds)]);
+  }
+
+  /** Union the given elements into the Selection (Shift+Marquee). */
+  addToSelection(nodeIds: readonly string[], connectionIds: readonly string[]): void {
+    this.setSelection(
+      [...this.selectedNodeIds(), ...nodeIds],
+      [...this.selectedConnectionIds(), ...connectionIds],
+    );
+  }
+
+  /** Shift+click on a Node: toggle its Selection membership. */
+  toggleNodeSelection(id: string): void {
+    const current = this.selectedNodeIds();
+    if (current.includes(id)) {
+      this.selectedNodeIds.set(current.filter(nodeId => nodeId !== id));
+    } else {
+      this.selectedNodeIds.set(this.normalizeNodeSelection([...current, id]));
+    }
+  }
+
+  /** Shift+click on a Connection: toggle its Selection membership. */
+  toggleConnectionSelection(id: string): void {
+    const current = this.selectedConnectionIds();
+    this.selectedConnectionIds.set(
+      current.includes(id) ? current.filter(connId => connId !== id) : [...current, id],
+    );
+  }
+
+  clearSelection(): void {
+    this.selectedNodeIds.set([]);
+    this.selectedConnectionIds.set([]);
+  }
+
+  /** Ctrl+A: every Group (as a unit), every loose Node, every Connection. */
+  selectAll(): void {
+    this.selectedNodeIds.set(this.nodes().filter(n => !n.parentId).map(n => n.id));
+    this.selectedConnectionIds.set(this.connections().map(c => c.id));
+  }
+
+  isNodeSelected(id: string): boolean {
+    return this.selectedNodeIds().includes(id);
+  }
+
+  isConnectionSelected(id: string): boolean {
+    return this.selectedConnectionIds().includes(id);
+  }
+
+  // Dedupe, and drop any Node whose Group is also in the set: a child never
+  // sits in the Selection beside its own Group (it would double-count moves).
+  private normalizeNodeSelection(nodeIds: readonly string[]): string[] {
+    const unique = [...new Set(nodeIds)];
+    const idSet = new Set(unique);
+    const parentOf = new Map(this.nodes().map(n => [n.id, n.parentId]));
+    return unique.filter(id => {
+      const parentId = parentOf.get(id);
+      return !(parentId && idSet.has(parentId));
+    });
   }
 
   // Viewport
@@ -401,29 +499,31 @@ export class GraphService {
     this.viewportState.set(frameViewport(bounds, viewWidth, viewHeight, GraphService.SELECTION_MAX_ZOOM));
   }
 
-  // Bounds of the current selection: a Node by its rect, a Group unioned with
-  // its children (a child's edge can overhang the Group rect), a Connection by
-  // its cubic bezier curve bounds. Null when nothing is selected.
+  // Bounds of the current Selection: each Node by its rect, a Group unioned
+  // with its children (a child's edge can overhang the Group rect), each
+  // Connection by its cubic bezier curve bounds. Null when nothing is selected.
   private selectionBounds(): Bounds | null {
-    const node = this.selectedNode();
-    if (node) {
-      const rect: Bounds = { x: node.x, y: node.y, width: node.width, height: node.height };
-      if (node.kind !== 'group') return rect;
-      const childRects = this.childrenOf(node.id).map(
-        c => ({ x: c.x, y: c.y, width: c.width, height: c.height }),
-      );
-      return unionBounds([rect, ...childRects]);
+    const parts: Bounds[] = [];
+
+    for (const node of this.selectedNodes()) {
+      parts.push({ x: node.x, y: node.y, width: node.width, height: node.height });
+      if (node.kind === 'group') {
+        for (const c of this.childrenOf(node.id)) {
+          parts.push({ x: c.x, y: c.y, width: c.width, height: c.height });
+        }
+      }
     }
 
-    const connId = this.selectedConnectionId();
-    if (connId) {
-      const conn = this.connections().find(c => c.id === connId);
-      if (!conn) return null;
+    const selectedConns = this.selectedConnections();
+    if (selectedConns.length > 0) {
       const nodeById = new Map(this.nodes().map(n => [n.id, n]));
-      return connectionBounds(conn, nodeById);
+      for (const conn of selectedConns) {
+        const bounds = connectionBounds(conn, nodeById);
+        if (bounds) parts.push(bounds);
+      }
     }
 
-    return null;
+    return parts.length > 0 ? unionBounds(parts) : null;
   }
 
   // Handle position computation — the pure geometry lives in curve.ts so bounds
@@ -442,8 +542,7 @@ export class GraphService {
 
     this.nodes.set(state.nodes.map(n => this.migrateNode(n)));
     this.connections.set(state.connections.map(c => this.migrateConnection(c)));
-    this.selectedNodeId.set(null);
-    this.selectedConnectionId.set(null);
+    this.clearSelection();
     return { success: true };
   }
 
@@ -656,7 +755,6 @@ export class GraphService {
   clearGraph(): void {
     this.nodes.set([]);
     this.connections.set([]);
-    this.selectedNodeId.set(null);
-    this.selectedConnectionId.set(null);
+    this.clearSelection();
   }
 }
