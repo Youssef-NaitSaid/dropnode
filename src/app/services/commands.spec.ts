@@ -21,6 +21,7 @@ import {
   SetConnectionColorCommand,
   SetConnectionArrowheadCommand,
   InsertElementsCommand,
+  QuickAddNodeCommand,
 } from './commands';
 
 describe('Commands', () => {
@@ -834,6 +835,160 @@ describe('Commands', () => {
       cmd.undo();
 
       expect(graphService.selectedNodeId()).toBe(other.id);
+    });
+  });
+
+  // Quick-add: dropping a connection drag in empty space spawns a connected
+  // Node anchored by its incoming Handle at the drop point, one undo step.
+  describe('QuickAddNodeCommand', () => {
+    it('execute spawns a New Node connected from the source Handle to the opposite Handle', () => {
+      const source = graphService.createNode('Source', 0, 0);
+      const cmd = new QuickAddNodeCommand(graphService, source.id, 'right', 400, 300);
+
+      cmd.execute();
+
+      expect(graphService.nodes().length).toBe(2);
+      const spawned = graphService.nodes()[1];
+      expect(spawned.text).toEqual(textFromString('New Node'));
+      expect(spawned.width).toBe(160);
+      expect(spawned.height).toBe(48);
+      expect(graphService.connections()).toMatchObject([{
+        sourceNodeId: source.id, sourceHandle: 'right',
+        targetNodeId: spawned.id, targetHandle: 'left',
+      }]);
+      expect(cmd.getNodeId()).toBe(spawned.id);
+    });
+
+    it('anchors the spawned Node so its incoming Handle sits exactly at the drop point', () => {
+      const source = graphService.createNode('Source', 0, 0);
+      // Worked examples for a 160x48 node: left handle at (x, y+24),
+      // right at (x+160, y+24), top at (x+80, y), bottom at (x+80, y+48)
+      const cases = [
+        { sourceHandle: 'right', targetHandle: 'left', dropX: 400, dropY: 300, expected: { x: 400, y: 276 } },
+        { sourceHandle: 'left', targetHandle: 'right', dropX: -200, dropY: 300, expected: { x: -360, y: 276 } },
+        { sourceHandle: 'bottom', targetHandle: 'top', dropX: 400, dropY: 300, expected: { x: 320, y: 300 } },
+        { sourceHandle: 'top', targetHandle: 'bottom', dropX: 400, dropY: -100, expected: { x: 320, y: -148 } },
+      ] as const;
+
+      for (const { sourceHandle, targetHandle, dropX, dropY, expected } of cases) {
+        const cmd = new QuickAddNodeCommand(graphService, source.id, sourceHandle, dropX, dropY);
+        cmd.execute();
+        const spawned = graphService.nodes()[graphService.nodes().length - 1];
+        expect({ x: spawned.x, y: spawned.y }).toEqual(expected);
+        expect(graphService.connections()[graphService.connections().length - 1]).toMatchObject({
+          sourceHandle, targetNodeId: spawned.id, targetHandle,
+        });
+      }
+    });
+
+    it('execute selects the spawned Node', () => {
+      const source = graphService.createNode('Source', 0, 0);
+      graphService.selectNode(source.id);
+
+      const cmd = new QuickAddNodeCommand(graphService, source.id, 'right', 400, 300);
+      cmd.execute();
+
+      expect(graphService.selectedNodeId()).toBe(cmd.getNodeId());
+    });
+
+    it('undo removes the spawned Node and its Connection as one step and clears its selection', () => {
+      const source = graphService.createNode('Source', 0, 0);
+      const cmd = new QuickAddNodeCommand(graphService, source.id, 'right', 400, 300);
+      cmd.execute();
+
+      cmd.undo();
+
+      expect(graphService.nodes().map(n => n.id)).toEqual([source.id]);
+      expect(graphService.connections().length).toBe(0);
+      expect(graphService.selectedNodeId()).toBeNull();
+    });
+
+    it('undo leaves an unrelated selection untouched', () => {
+      const source = graphService.createNode('Source', 0, 0);
+      const cmd = new QuickAddNodeCommand(graphService, source.id, 'right', 400, 300);
+      cmd.execute();
+      graphService.selectNode(source.id);
+
+      cmd.undo();
+
+      expect(graphService.selectedNodeId()).toBe(source.id);
+    });
+
+    it('redo re-spawns the Node and Connection and re-selects the Node', () => {
+      const source = graphService.createNode('Source', 0, 0);
+      const cmd = new QuickAddNodeCommand(graphService, source.id, 'right', 400, 300);
+
+      cmd.execute();
+      cmd.undo();
+      cmd.execute();
+
+      expect(graphService.nodes().length).toBe(2);
+      expect(graphService.connections().length).toBe(1);
+      expect(graphService.selectedNodeId()).toBe(cmd.getNodeId());
+    });
+
+    it('a drop inside a Group parents the spawned Node into it', () => {
+      const source = graphService.createNode('Source', 0, 0);
+      const group = graphService.createGroup('Group', 400, 100); // 320x200 bounds
+
+      const cmd = new QuickAddNodeCommand(graphService, source.id, 'right', 450, 200);
+      cmd.execute();
+
+      const spawned = graphService.nodes().find(n => n.id === cmd.getNodeId());
+      expect(spawned?.parentId).toBe(group.id);
+      expect(graphService.connections().length).toBe(1);
+    });
+
+    it('undo removes a Group-parented spawn and its Connection in one step', () => {
+      const source = graphService.createNode('Source', 0, 0);
+      const group = graphService.createGroup('Group', 400, 100);
+      const cmd = new QuickAddNodeCommand(graphService, source.id, 'right', 450, 200);
+      cmd.execute();
+
+      cmd.undo();
+
+      expect(graphService.nodes().map(n => n.id)).toEqual([source.id, group.id]);
+      expect(graphService.connections().length).toBe(0);
+    });
+
+    it('the topmost-rendered Group claims an overlapping drop point', () => {
+      const source = graphService.createNode('Source', 0, 0);
+      graphService.createGroup('Under', 400, 100);
+      const top = graphService.createGroup('Over', 500, 150); // later in the array
+
+      const cmd = new QuickAddNodeCommand(graphService, source.id, 'right', 550, 200);
+      cmd.execute();
+
+      expect(graphService.nodes().find(n => n.id === cmd.getNodeId())?.parentId).toBe(top.id);
+    });
+
+    it('dragging from a Group into its own bounds spawns unparented but still connected', () => {
+      const group = graphService.createGroup('Group', 400, 100);
+
+      const cmd = new QuickAddNodeCommand(graphService, group.id, 'bottom', 450, 200);
+      cmd.execute();
+
+      const spawned = graphService.nodes().find(n => n.id === cmd.getNodeId());
+      expect(spawned?.parentId).toBeUndefined();
+      expect(graphService.connections()).toMatchObject([{
+        sourceNodeId: group.id, sourceHandle: 'bottom',
+        targetNodeId: spawned!.id, targetHandle: 'top',
+      }]);
+    });
+
+    it('dragging from a child dropped inside its Group parents and connects', () => {
+      const group = graphService.createGroup('Group', 400, 100);
+      const child = graphService.createNode('Child', 420, 120);
+      graphService.setNodeParent(child.id, group.id);
+
+      const cmd = new QuickAddNodeCommand(graphService, child.id, 'right', 600, 250);
+      cmd.execute();
+
+      const spawned = graphService.nodes().find(n => n.id === cmd.getNodeId());
+      expect(spawned?.parentId).toBe(group.id);
+      expect(graphService.connections()).toMatchObject([{
+        sourceNodeId: child.id, targetNodeId: spawned!.id,
+      }]);
     });
   });
 });

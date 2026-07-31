@@ -1,5 +1,5 @@
 import { Command } from '../models/command';
-import { GraphNode, HandleSide } from '../models/node';
+import { GraphNode, HandleSide, oppositeHandle } from '../models/node';
 import { Connection, ArrowheadType, ArrowheadEnd, effectiveArrowhead, defaultArrowhead } from '../models/connection';
 import { Text } from '../models/text';
 import { GraphService } from './graph.service';
@@ -462,6 +462,78 @@ export class CompoundCommand implements Command {
     for (let i = this.parts.length - 1; i >= 0; i--) {
       this.parts[i].undo();
     }
+  }
+}
+
+// Quick-add: dropping a connection drag in empty space (no snap) spawns a
+// default "New Node" anchored so its incoming Handle — the one opposite the
+// source Handle, matching the ghost bezier — sits exactly at the drop point,
+// already connected. Spawn, parenting, and Connection are one undo step; the
+// auto-opened Text edit commits separately as its own SetNodeTextCommand.
+export class QuickAddNodeCommand implements Command {
+  description = 'Quick-add Node';
+  private node: GraphNode | null = null;
+
+  constructor(
+    private graphService: GraphService,
+    private sourceNodeId: string,
+    private sourceHandle: HandleSide,
+    private dropX: number,
+    private dropY: number,
+  ) {}
+
+  execute(): void {
+    const width = 160;
+    const height = 48;
+    // Position the node so its incoming Handle lands on the drop point
+    let x: number;
+    let y: number;
+    switch (this.sourceHandle) {
+      case 'right': // incoming left Handle
+        x = this.dropX;
+        y = this.dropY - height / 2;
+        break;
+      case 'left': // incoming right Handle
+        x = this.dropX - width;
+        y = this.dropY - height / 2;
+        break;
+      case 'bottom': // incoming top Handle
+        x = this.dropX - width / 2;
+        y = this.dropY;
+        break;
+      case 'top': // incoming bottom Handle
+        x = this.dropX - width / 2;
+        y = this.dropY - height;
+        break;
+    }
+
+    this.node = this.graphService.createNode('New Node', x, y);
+    // Containment by drop point, except when the source IS that Group: a
+    // Group can never connect to its own child, and the Connection — what
+    // the gesture was about — wins over parenting
+    const group = this.graphService.findGroupAt(this.dropX, this.dropY);
+    if (group && group.id !== this.sourceNodeId) {
+      this.graphService.setNodeParent(this.node.id, group.id);
+    }
+    this.graphService.createConnection(
+      this.sourceNodeId, this.sourceHandle,
+      this.node.id, oppositeHandle(this.sourceHandle),
+    );
+    // Selection lives in execute so redo re-selects (Paste precedent)
+    this.graphService.selectNode(this.node.id);
+  }
+
+  undo(): void {
+    if (!this.node) return;
+    // deleteNode cascade-deletes the Connection created alongside
+    this.graphService.deleteNode(this.node.id);
+    if (this.graphService.selectedNodeId() === this.node.id) {
+      this.graphService.selectNode(null);
+    }
+  }
+
+  getNodeId(): string | null {
+    return this.node?.id ?? null;
   }
 }
 
