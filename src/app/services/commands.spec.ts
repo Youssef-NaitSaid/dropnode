@@ -1255,11 +1255,12 @@ describe('Commands', () => {
       buildTidyUpCommand(graphService)!.execute();
 
       // Old bounds top-left is (500,500); the lone child sits at the content
-      // origin (padding 16), and the Group wraps it exactly: 160+32 x 48+32
+      // origin (16 in, below the 28-unit label strip + 16 padding), and the
+      // Group wraps it exactly: 160+32 x 28+48+32
       expect(graphService.nodes().find(n => n.id === group.id)).toMatchObject({
-        x: 500, y: 500, width: 192, height: 80,
+        x: 500, y: 500, width: 192, height: 108,
       });
-      expect(graphService.nodes().find(n => n.id === child.id)).toMatchObject({ x: 516, y: 516 });
+      expect(graphService.nodes().find(n => n.id === child.id)).toMatchObject({ x: 516, y: 544 });
     });
 
     it('undo restores positions, Group rects, and Handles exactly, ids untouched', () => {

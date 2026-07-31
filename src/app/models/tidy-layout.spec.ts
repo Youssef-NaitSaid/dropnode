@@ -216,17 +216,18 @@ describe('tidyLayout', () => {
 
     const result = tidyLayout(nodes, connections);
 
-    // Children chain inside: x at the content origin, y one layer right;
-    // the Group shrinks to exactly their bounds + 16 padding all around
+    // Children chain inside below the 28-unit label strip: x at the content
+    // origin (16 in, 28+16 down), y one layer right; the Group shrinks to
+    // exactly their bounds + 16 padding, plus the strip's headroom on top
     expect(result.groupRects).toEqual([
-      { id: 'g', x: 0, y: 0, width: 160 + TIDY_LAYER_GAP + 160 + 32, height: 48 + 32 },
+      { id: 'g', x: 0, y: 0, width: 160 + TIDY_LAYER_GAP + 160 + 32, height: 28 + 48 + 32 },
     ]);
     const byId = new Map(result.nodePositions.map(p => [p.id, p]));
-    expect(byId.get('x')).toEqual({ id: 'x', x: 16, y: 16 });
-    expect(byId.get('y')).toEqual({ id: 'y', x: 16 + 160 + TIDY_LAYER_GAP, y: 16 });
+    expect(byId.get('x')).toEqual({ id: 'x', x: 16, y: 44 });
+    expect(byId.get('y')).toEqual({ id: 'y', x: 16 + 160 + TIDY_LAYER_GAP, y: 44 });
     // The promoted edge lays out g→out left-to-right: out sits one layer
-    // right of the Group's 472-unit width, centered on its 80-unit height
-    expect(byId.get('out')).toEqual({ id: 'out', x: 472 + TIDY_LAYER_GAP, y: 16 });
+    // right of the Group's 472-unit width, centered on its 108-unit height
+    expect(byId.get('out')).toEqual({ id: 'out', x: 472 + TIDY_LAYER_GAP, y: (108 - 48) / 2 });
     // Every Connection already faces its counterpart — nothing re-picked
     expect(result.handleAssignments).toEqual([]);
   });

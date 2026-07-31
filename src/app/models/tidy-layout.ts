@@ -22,6 +22,11 @@ export const TIDY_GRID_GAP = 40; // loner-grid gutters
 // resize clamp's padding (a model module cannot import the service).
 export const TIDY_GROUP_PADDING = 16;
 
+// Height of a Group's label strip (.group-label-strip in the node component):
+// the inner layout starts children below it so tidied children never cover
+// the Group's Label.
+export const TIDY_GROUP_LABEL_STRIP = 28;
+
 export interface TidyNodePosition {
   id: string;
   x: number;
@@ -416,7 +421,7 @@ export function tidyLayout(
     innerLayouts.set(group.id, local);
     groupSize.set(group.id, {
       width: width + 2 * TIDY_GROUP_PADDING,
-      height: height + 2 * TIDY_GROUP_PADDING,
+      height: height + 2 * TIDY_GROUP_PADDING + TIDY_GROUP_LABEL_STRIP,
     });
   }
 
@@ -450,7 +455,7 @@ export function tidyLayout(
     for (const [childId, p] of local) {
       newPos.set(childId, {
         x: origin.x + TIDY_GROUP_PADDING + p.x,
-        y: origin.y + TIDY_GROUP_PADDING + p.y,
+        y: origin.y + TIDY_GROUP_LABEL_STRIP + TIDY_GROUP_PADDING + p.y,
       });
     }
   }
