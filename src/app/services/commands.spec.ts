@@ -1255,11 +1255,12 @@ describe('Commands', () => {
       buildTidyUpCommand(graphService)!.execute();
 
       // Old bounds top-left is (500,500); the lone child sits at the content
-      // origin (padding 16), and the Group wraps it exactly: 160+32 x 48+32
+      // origin (16 in, below the 28-unit label strip + 16 padding), and the
+      // Group wraps it exactly: 160+32 x 28+48+32
       expect(graphService.nodes().find(n => n.id === group.id)).toMatchObject({
-        x: 500, y: 500, width: 192, height: 80,
+        x: 500, y: 500, width: 192, height: 108,
       });
-      expect(graphService.nodes().find(n => n.id === child.id)).toMatchObject({ x: 516, y: 516 });
+      expect(graphService.nodes().find(n => n.id === child.id)).toMatchObject({ x: 516, y: 544 });
     });
 
     it('undo restores positions, Group rects, and Handles exactly, ids untouched', () => {
@@ -1306,6 +1307,28 @@ describe('Commands', () => {
       buildTidyUpCommand(graphService)!.execute();
 
       expect(buildTidyUpCommand(graphService)).toBeNull();
+    });
+
+    it('re-picking Handles preserves Arrowheads, color, and Text untouched', () => {
+      const a = graphService.createNode('A', 0, 0);
+      const b = graphService.createNode('B', 10, 300);
+      const conn = graphService.createConnection(a.id, 'top', b.id, 'top')!;
+      graphService.setConnectionArrowhead(conn.id, 'start', 'triangle');
+      graphService.setConnectionArrowhead(conn.id, 'end', 'none');
+      graphService.setConnectionColor(conn.id, NODE_PALETTE[2]);
+      graphService.setConnectionText(conn.id, textFromString('label'));
+
+      buildTidyUpCommand(graphService)!.execute();
+
+      // Handles turn to face the flow; every other Connection field rides along
+      expect(graphService.connections().find(c => c.id === conn.id)).toMatchObject({
+        sourceHandle: 'right',
+        targetHandle: 'left',
+        startArrowhead: 'triangle',
+        endArrowhead: 'none',
+        color: NODE_PALETTE[2],
+        text: textFromString('label'),
+      });
     });
 
     it('neither execute nor undo touches the Selection', () => {

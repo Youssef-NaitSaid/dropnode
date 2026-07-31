@@ -113,7 +113,7 @@ describe('tidyLayout', () => {
     expect(y('d')).toBeLessThan(y('c'));
   });
 
-  it('lays a cycle out with the back Connection running right-to-left', () => {
+  it('lays a cycle out with the back Connection arcing over the top', () => {
     const nodes = [node('a', 0, 0), node('b', 0, 100)];
     const connections = [
       conn('c1', 'a', 'top', 'b', 'top'),
@@ -124,10 +124,48 @@ describe('tidyLayout', () => {
 
     const byId = new Map(result.nodePositions.map(p => [p.id, p]));
     expect(byId.get('b')!.x).toBeGreaterThan(byId.get('a')?.x ?? 0);
-    // Forward edge flows right; the back edge faces left from b into a's right
+    // Forward edge flows right; the back edge must NOT mirror it onto the
+    // same straight segment — it arcs over the row via top Handles
     const handles = new Map(result.handleAssignments.map(h => [h.id, h]));
     expect(handles.get('c1')).toEqual({ id: 'c1', sourceHandle: 'right', targetHandle: 'left' });
-    expect(handles.get('c2')).toEqual({ id: 'c2', sourceHandle: 'left', targetHandle: 'right' });
+    expect(handles.get('c2')).toEqual({ id: 'c2', sourceHandle: 'top', targetHandle: 'top' });
+  });
+
+  it('routes a three-Node cycle so the closing Connection stays visible', () => {
+    // The reported bug: n1→n2→n3→n1 — the back edge used to get left/right
+    // Handles, a dead-straight line camouflaged under the forward segments
+    // and hidden behind n2's card
+    const nodes = [node('n1', 0, 0), node('n2', 400, 200), node('n3', 100, 500)];
+    const connections = [
+      conn('c1', 'n1', 'right', 'n2', 'left'),
+      conn('c2', 'n2', 'right', 'n3', 'left'),
+      conn('c3', 'n3', 'right', 'n1', 'left'),
+    ];
+
+    const result = tidyLayout(nodes, connections);
+
+    const handles = new Map(result.handleAssignments.map(h => [h.id, h]));
+    // Forward edges already face — untouched; the back edge arcs over
+    expect(handles.get('c1')).toBeUndefined();
+    expect(handles.get('c2')).toBeUndefined();
+    expect(handles.get('c3')).toEqual({ id: 'c3', sourceHandle: 'top', targetHandle: 'top' });
+  });
+
+  it('detours a layer-skipping Connection under the row it would hide behind', () => {
+    // a→b→c plus direct a→c: the a→c corridor runs straight through b's
+    // card at the shared row center — it detours under via bottom Handles
+    const nodes = [node('a', 0, 0), node('b', 300, 0), node('c', 600, 0)];
+    const connections = [
+      conn('c1', 'a', 'right', 'b', 'left'),
+      conn('c2', 'b', 'right', 'c', 'left'),
+      conn('c3', 'a', 'right', 'c', 'left'),
+    ];
+
+    const result = tidyLayout(nodes, connections);
+
+    expect(result.handleAssignments).toEqual([
+      { id: 'c3', sourceHandle: 'bottom', targetHandle: 'bottom' },
+    ]);
   });
 
   it('emits no Handle assignment for a Connection already facing its counterpart', () => {
@@ -178,17 +216,18 @@ describe('tidyLayout', () => {
 
     const result = tidyLayout(nodes, connections);
 
-    // Children chain inside: x at the content origin, y one layer right;
-    // the Group shrinks to exactly their bounds + 16 padding all around
+    // Children chain inside below the 28-unit label strip: x at the content
+    // origin (16 in, 28+16 down), y one layer right; the Group shrinks to
+    // exactly their bounds + 16 padding, plus the strip's headroom on top
     expect(result.groupRects).toEqual([
-      { id: 'g', x: 0, y: 0, width: 160 + TIDY_LAYER_GAP + 160 + 32, height: 48 + 32 },
+      { id: 'g', x: 0, y: 0, width: 160 + TIDY_LAYER_GAP + 160 + 32, height: 28 + 48 + 32 },
     ]);
     const byId = new Map(result.nodePositions.map(p => [p.id, p]));
-    expect(byId.get('x')).toEqual({ id: 'x', x: 16, y: 16 });
-    expect(byId.get('y')).toEqual({ id: 'y', x: 16 + 160 + TIDY_LAYER_GAP, y: 16 });
+    expect(byId.get('x')).toEqual({ id: 'x', x: 16, y: 44 });
+    expect(byId.get('y')).toEqual({ id: 'y', x: 16 + 160 + TIDY_LAYER_GAP, y: 44 });
     // The promoted edge lays out g→out left-to-right: out sits one layer
-    // right of the Group's 472-unit width, centered on its 80-unit height
-    expect(byId.get('out')).toEqual({ id: 'out', x: 472 + TIDY_LAYER_GAP, y: 16 });
+    // right of the Group's 472-unit width, centered on its 108-unit height
+    expect(byId.get('out')).toEqual({ id: 'out', x: 472 + TIDY_LAYER_GAP, y: (108 - 48) / 2 });
     // Every Connection already faces its counterpart — nothing re-picked
     expect(result.handleAssignments).toEqual([]);
   });
