@@ -1,4 +1,4 @@
-import { HandleSide } from './node';
+import { HandleSide, GraphNode } from './node';
 import { TEXT_POSITION_MIN, TEXT_POSITION_MAX, TEXT_POSITION_DEFAULT } from './connection';
 
 // Pure Connection curve geometry (ADR-0013). The single source of truth for
@@ -47,6 +47,18 @@ export function connectionCurve(
     cp1: controlPoint(start, startHandle, offset),
     cp2: controlPoint(end, endHandle, offset),
   };
+}
+
+/** The Canvas-coordinate anchor of a Node's Handle on the given edge — derived
+ *  from the Node's rect. The single source of truth shared by the connection
+ *  layer, hit-testing, and bounds. */
+export function handlePoint(node: GraphNode, side: HandleSide): Point {
+  switch (side) {
+    case 'top': return { x: node.x + node.width / 2, y: node.y };
+    case 'right': return { x: node.x + node.width, y: node.y + node.height / 2 };
+    case 'bottom': return { x: node.x + node.width / 2, y: node.y + node.height };
+    case 'left': return { x: node.x, y: node.y + node.height / 2 };
+  }
 }
 
 /** Cubic bezier point at parameter t. */

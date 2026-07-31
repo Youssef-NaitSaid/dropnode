@@ -585,6 +585,185 @@ describe('GraphService', () => {
     });
   });
 
+  describe('zoom to fit / zoom to selection', () => {
+    // A fixed visible-canvas region for every framing assertion below
+    const W = 800;
+    const H = 600;
+
+    it('zoomToFit zooms out to frame all Nodes, centered, with a 10% margin', () => {
+      service.createNode('a', 0, 0, 100, 100);
+      service.createNode('b', 900, 0, 100, 100);
+      // graph box: 0..1000 x 0..100
+
+      service.zoomToFit(W, H);
+
+      const vp = service.viewportState();
+      // zoom = min(0.9*800/1000, 0.9*600/100) = min(0.72, 5.4) = 0.72
+      expect(vp.zoom).toBeCloseTo(0.72, 5);
+      // pan = viewportCenter - boundsCenter*zoom
+      // panX = 400 - 500*0.72 = 40 ; panY = 300 - 50*0.72 = 264
+      expect(vp.panX).toBeCloseTo(40, 5);
+      expect(vp.panY).toBeCloseTo(264, 5);
+    });
+
+    it('zoomToFit never magnifies a small graph past 1x, centering it at real size', () => {
+      service.createNode('only', 0, 0, 100, 100);
+
+      service.zoomToFit(W, H);
+
+      const vp = service.viewportState();
+      // raw fit would be 5.4x; the fit cap holds it at 1x
+      expect(vp.zoom).toBe(1);
+      // panX = 400 - 50*1 = 350 ; panY = 300 - 50*1 = 250
+      expect(vp.panX).toBeCloseTo(350, 5);
+      expect(vp.panY).toBeCloseTo(250, 5);
+    });
+
+    it('zoomToFit floors zoom at 0.1 for a graph far larger than the viewport', () => {
+      service.createNode('a', 0, 0, 100, 100);
+      service.createNode('b', 100000, 0, 100, 100);
+      // box width ~100100 → raw fit far below 0.1, floored to 0.1
+
+      service.zoomToFit(W, H);
+
+      expect(service.viewportState().zoom).toBe(0.1);
+    });
+
+    it('zoomToFit on an empty graph leaves the Viewport untouched', () => {
+      service.setViewport({ panX: 12, panY: 34, zoom: 2 });
+
+      service.zoomToFit(W, H);
+
+      expect(service.viewportState()).toEqual({ panX: 12, panY: 34, zoom: 2 });
+    });
+
+    it('zoomToFit includes Connection curves that bow outside the node box', () => {
+      const a = service.createNode('a', 0, 0, 100, 100);
+      const b = service.createNode('b', 900, 0, 100, 100);
+      // a top -> b top: the curve's tight bounds reach y=-112.5 (its actual
+      // apex, well above the node box which starts at y=0)
+      service.createConnection(a.id, 'top', b.id, 'top');
+
+      service.zoomToFit(W, H);
+
+      const vp = service.viewportState();
+      // content box: x 0..1000, y -112.5..100 -> 1000 x 212.5
+      // zoom = min(0.9*800/1000, 0.9*600/212.5) = min(0.72, 2.541) = 0.72
+      expect(vp.zoom).toBeCloseTo(0.72, 5);
+      // center (500,-6.25): panX = 400 - 500*0.72 = 40 ; panY = 300 - (-6.25)*0.72 = 304.5
+      expect(vp.panX).toBeCloseTo(40, 5);
+      expect(vp.panY).toBeCloseTo(304.5, 5);
+    });
+
+    it('zoomToSelection frames the selected Node, magnifying up to 2x', () => {
+      const n = service.createNode('n', 0, 0, 100, 100);
+      service.selectNode(n.id);
+
+      service.zoomToSelection(W, H);
+
+      const vp = service.viewportState();
+      // raw fit 5.4x; the selection cap holds it at 2x
+      expect(vp.zoom).toBe(2);
+      // panX = 400 - 50*2 = 300 ; panY = 300 - 50*2 = 200
+      expect(vp.panX).toBeCloseTo(300, 5);
+      expect(vp.panY).toBeCloseTo(200, 5);
+    });
+
+    it('zoomToSelection frames a Group unioned with its children', () => {
+      const group = service.createGroup('g', 0, 0, 400, 400);
+      const child = service.createNode('c', 300, 300, 200, 200);
+      service.setNodeParent(child.id, group.id);
+      // union box: 0..500 x 0..500 (the child overhangs the group rect)
+      service.selectNode(group.id);
+
+      service.zoomToSelection(W, H);
+
+      const vp = service.viewportState();
+      // zoom = min(0.9*800/500, 0.9*600/500) = min(1.44, 1.08) = 1.08
+      expect(vp.zoom).toBeCloseTo(1.08, 5);
+      // center (250,250): panX = 400 - 250*1.08 = 130 ; panY = 300 - 250*1.08 = 30
+      expect(vp.panX).toBeCloseTo(130, 5);
+      expect(vp.panY).toBeCloseTo(30, 5);
+    });
+
+    it('zoomToSelection frames the selected Connection by its endpoint Handles', () => {
+      const n1 = service.createNode('n1', 0, 0, 100, 100);
+      const n2 = service.createNode('n2', 400, 300, 100, 100);
+      const conn = service.createConnection(n1.id, 'right', n2.id, 'left');
+      service.selectConnection(conn!.id);
+      // endpoints: right of n1 = (100,50), left of n2 = (400,350) → box 100..400 x 50..350
+
+      service.zoomToSelection(W, H);
+
+      const vp = service.viewportState();
+      // zoom = min(0.9*800/300, 0.9*600/300) = min(2.4, 1.8) = 1.8
+      expect(vp.zoom).toBeCloseTo(1.8, 5);
+      // center (250,200): panX = 400 - 250*1.8 = -50 ; panY = 300 - 200*1.8 = -60
+      expect(vp.panX).toBeCloseTo(-50, 5);
+      expect(vp.panY).toBeCloseTo(-60, 5);
+    });
+
+    it('zoomToSelection frames a straight Connection by its length (zero-height box, no NaN)', () => {
+      const n1 = service.createNode('n1', 0, 0, 100, 100);
+      const n2 = service.createNode('n2', 400, 0, 100, 100);
+      const conn = service.createConnection(n1.id, 'right', n2.id, 'left');
+      service.selectConnection(conn!.id);
+      // endpoints both at y=50 → box 100..400 with height 0
+
+      service.zoomToSelection(W, H);
+
+      const vp = service.viewportState();
+      // x-axis fit = 2.4, y-axis unconstrained → capped at 2x
+      expect(vp.zoom).toBe(2);
+      // center (250,50): panX = 400 - 250*2 = -100 ; panY = 300 - 50*2 = 200
+      expect(vp.panX).toBeCloseTo(-100, 5);
+      expect(vp.panY).toBeCloseTo(200, 5);
+    });
+
+    it('zoomToSelection frames a vertical Connection by its length (zero-width box, no NaN)', () => {
+      const n1 = service.createNode('n1', 0, 0, 100, 100);
+      const n2 = service.createNode('n2', 0, 400, 100, 100);
+      const conn = service.createConnection(n1.id, 'bottom', n2.id, 'top');
+      service.selectConnection(conn!.id);
+      // endpoints both at x=50 → box with width 0, y 100..400
+
+      service.zoomToSelection(W, H);
+
+      const vp = service.viewportState();
+      // y-axis fit = 0.9*600/300 = 1.8, x-axis unconstrained → 1.8 (under the 2x cap)
+      expect(vp.zoom).toBeCloseTo(1.8, 5);
+      // center (50,250): panX = 400 - 50*1.8 = 310 ; panY = 300 - 250*1.8 = -150
+      expect(vp.panX).toBeCloseTo(310, 5);
+      expect(vp.panY).toBeCloseTo(-150, 5);
+    });
+
+    it('zoomToSelection frames a bowing Connection by its whole curve, not just its endpoints', () => {
+      const a = service.createNode('a', 0, 0, 100, 100);
+      const b = service.createNode('b', 900, 0, 100, 100);
+      const conn = service.createConnection(a.id, 'top', b.id, 'top');
+      service.selectConnection(conn!.id);
+      // tight curve box: x 50..950, y -112.5..0 -> 900 x 112.5
+      // (the endpoints alone would be a zero-height line at y=0)
+
+      service.zoomToSelection(W, H);
+
+      const vp = service.viewportState();
+      // zoom = min(0.9*800/900, 0.9*600/112.5) = min(0.8, 4.8) = 0.8
+      expect(vp.zoom).toBeCloseTo(0.8, 5);
+      // center (500,-56.25): panX = 400 - 500*0.8 = 0 ; panY = 300 - (-56.25)*0.8 = 345
+      expect(vp.panX).toBeCloseTo(0, 5);
+      expect(vp.panY).toBeCloseTo(345, 5);
+    });
+
+    it('zoomToSelection with nothing selected leaves the Viewport untouched', () => {
+      service.setViewport({ panX: 5, panY: 6, zoom: 3 });
+
+      service.zoomToSelection(W, H);
+
+      expect(service.viewportState()).toEqual({ panX: 5, panY: 6, zoom: 3 });
+    });
+  });
+
   describe('getHandlePosition', () => {
     it('returns correct position for top handle', () => {
       const node = service.createNode('Test', 100, 200, 160, 48);

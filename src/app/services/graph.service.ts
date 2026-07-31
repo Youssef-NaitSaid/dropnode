@@ -2,13 +2,19 @@ import { Injectable, signal, computed } from '@angular/core';
 import { GraphNode, HandleSide, NODE_PALETTE } from '../models/node';
 import { Connection, ArrowheadType, ArrowheadEnd, ARROWHEAD_TYPES, defaultArrowhead, TEXT_POSITION_MIN, TEXT_POSITION_MAX, TEXT_POSITION_DEFAULT } from '../models/connection';
 import { GraphState } from '../models/graph-state';
-import { ViewportState } from '../models/viewport-state';
+import { ViewportState, ZOOM_MIN, ZOOM_MAX } from '../models/viewport-state';
+import { Bounds, unionBounds, contentBounds, connectionBounds, frameViewport } from '../models/bounds';
+import { handlePoint } from '../models/curve';
 import { Text, textFromString, isTextEmpty, validateText, canonicalizeText } from '../models/text';
 
 @Injectable({ providedIn: 'root' })
 export class GraphService {
   // Padding kept between a Group's edges and its children's bounding box
   static readonly GROUP_CHILD_PADDING = 16;
+  // Framing never over-magnifies: fit the whole graph no larger than 1x, a
+  // single selection no larger than 2x (both still within the [0.1,5] clamp)
+  static readonly FIT_MAX_ZOOM = 1;
+  static readonly SELECTION_MAX_ZOOM = 2;
 
   // Core state signals
   readonly nodes = signal<GraphNode[]>([]);
@@ -367,7 +373,7 @@ export class GraphService {
 
   zoomBy(delta: number, centerX: number, centerY: number): void {
     const current = this.viewportState();
-    const newZoom = Math.min(Math.max(current.zoom + delta, 0.1), 5);
+    const newZoom = Math.min(Math.max(current.zoom + delta, ZOOM_MIN), ZOOM_MAX);
     const zoomRatio = newZoom / current.zoom;
 
     // Zoom centered on the given point
@@ -377,21 +383,54 @@ export class GraphService {
     this.viewportState.set({ panX: newPanX, panY: newPanY, zoom: newZoom });
   }
 
-  // Handle position computation
+  // Frame the whole graph (all Nodes plus Connection curves, Groups included)
+  // into the given visible-canvas region, centered, never magnifying past 1x.
+  // An empty graph is a silent no-op. Pure Viewport change — no History entry.
+  zoomToFit(viewWidth: number, viewHeight: number): void {
+    const bounds = contentBounds(this.nodes(), this.connections());
+    if (!bounds) return;
+    this.viewportState.set(frameViewport(bounds, viewWidth, viewHeight, GraphService.FIT_MAX_ZOOM));
+  }
+
+  // Frame the selected element into the given visible-canvas region, centered,
+  // magnifying no further than 2x. No selection is a silent no-op. Pure
+  // Viewport change — no History entry.
+  zoomToSelection(viewWidth: number, viewHeight: number): void {
+    const bounds = this.selectionBounds();
+    if (!bounds) return;
+    this.viewportState.set(frameViewport(bounds, viewWidth, viewHeight, GraphService.SELECTION_MAX_ZOOM));
+  }
+
+  // Bounds of the current selection: a Node by its rect, a Group unioned with
+  // its children (a child's edge can overhang the Group rect), a Connection by
+  // its cubic bezier curve bounds. Null when nothing is selected.
+  private selectionBounds(): Bounds | null {
+    const node = this.selectedNode();
+    if (node) {
+      const rect: Bounds = { x: node.x, y: node.y, width: node.width, height: node.height };
+      if (node.kind !== 'group') return rect;
+      const childRects = this.childrenOf(node.id).map(
+        c => ({ x: c.x, y: c.y, width: c.width, height: c.height }),
+      );
+      return unionBounds([rect, ...childRects]);
+    }
+
+    const connId = this.selectedConnectionId();
+    if (connId) {
+      const conn = this.connections().find(c => c.id === connId);
+      if (!conn) return null;
+      const nodeById = new Map(this.nodes().map(n => [n.id, n]));
+      return connectionBounds(conn, nodeById);
+    }
+
+    return null;
+  }
+
+  // Handle position computation — the pure geometry lives in curve.ts so bounds
+  // and the connection layer share one definition.
   getHandlePosition(nodeId: string, handle: HandleSide): { x: number; y: number } | null {
     const node = this.nodes().find(n => n.id === nodeId);
-    if (!node) return null;
-
-    switch (handle) {
-      case 'top':
-        return { x: node.x + node.width / 2, y: node.y };
-      case 'right':
-        return { x: node.x + node.width, y: node.y + node.height / 2 };
-      case 'bottom':
-        return { x: node.x + node.width / 2, y: node.y + node.height };
-      case 'left':
-        return { x: node.x, y: node.y + node.height / 2 };
-    }
+    return node ? handlePoint(node, handle) : null;
   }
 
   // Import/Export

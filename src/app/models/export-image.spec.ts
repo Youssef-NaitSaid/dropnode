@@ -4,6 +4,7 @@ import {
   EXPORT_THEMES, themedNodeBackground,
 } from './export-image';
 import { GraphNode } from './node';
+import { Connection } from './connection';
 import { NODE_PALETTE } from './node';
 
 const node = (id: string, x: number, y: number, width: number, height: number): GraphNode => ({
@@ -50,6 +51,21 @@ describe('exportBounds', () => {
       outputWidth: EXPORT_PADDING * 2 * EXPORT_SCALE,
       outputHeight: EXPORT_PADDING * 2 * EXPORT_SCALE,
     });
+  });
+
+  it('encloses Connection curves so a bowing curve is not cropped', () => {
+    const nodes = [node('A', 0, 0, 100, 100), node('B', 900, 0, 100, 100)];
+    const conns: Connection[] = [
+      { id: 'c1', sourceNodeId: 'A', sourceHandle: 'top', targetNodeId: 'B', targetHandle: 'top' },
+    ];
+
+    const bounds = exportBounds(nodes, conns);
+
+    // The A.top->B.top curve's apex is at y=-112.5, above the node box (y>=0),
+    // so the capture must reach it plus the padding. Nodes-only would have
+    // started at y=-40 with height 180.
+    expect(bounds.y).toBeCloseTo(-112.5 - EXPORT_PADDING, 5);
+    expect(bounds.height).toBeCloseTo(212.5 + EXPORT_PADDING * 2, 5);
   });
 });
 

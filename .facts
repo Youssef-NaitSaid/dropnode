@@ -104,6 +104,10 @@
 - mousedown-drag on empty Canvas pans the Viewport and deselects the current Node
 - reset view restores pan (0,0) and zoom 1; importing or clearing a graph does NOT reset the Viewport
 - pan and zoom apply as one shared CSS translate+scale transform covering both the DOM node layer and the SVG connection layer
+- Zoom to fit frames the whole graph — all Nodes (Groups included) unioned with every Connection's curve bounds so a bowing curve is never clipped — into 90% of the visible Canvas, centered on both axes, never magnifying past 1x; an empty graph is a silent no-op @spec
+- Zoom to selection frames the selected element — a Node by its rect, a Group unioned with its children, a Connection by its cubic bezier bounds (the control-point box, which encloses the bow) — into 90% of the Viewport, centered, magnifying no further than 2x; no selection is a silent no-op @spec
+- Zoom to fit and Zoom to selection are bounds-centered — a third zoom-centering behavior alongside cursor-centered wheel zoom and origin-centered toolbar buttons; both write pan+zoom instantly within the [0.1,5] clamp, add no History entry, and persist via the normal Viewport auto-save @spec
+- the toolbar zoom cluster carries a Zoom to fit button distinct from Reset View; Zoom to selection is keyboard-only, with no toolbar button or Context Menu entry @spec
 
 ## history
 
@@ -133,7 +137,7 @@
 - the Export Theme (dark | light) applies only while rendering a PNG: it sets the image background and flips the dark-only defaults (Group chrome and Connection Text chips); default Node fills, Node Text, and the Connection stroke keep their on-screen appearance, applied Palette colors pass through, and nothing is ever written to Graph State or the JSON payload
 - PNG export snapshots the on-screen graph via a foreignObject-serialized clone of the canvas-transform layer (ADR-0014); it is offered only from the Scratch Canvas toolbar and the currently open Project's Sidebar row — other project rows keep Export JSON file
 - the PNG snapshot carries the body's computed text defaults (font stack, size, line height) onto its root, so exported Text renders in the same font as the editor instead of the SVG serif fallback
-- label: the PNG captures the full graph bounds plus 40 canvas-unit padding at 2x scale, independent of pan/zoom, stripping Handles, Resize Grips, and selection chrome; an empty graph exports just the padded background
+- label: the PNG captures the full graph bounds (all Nodes and every Connection's curve, so a bowing curve is never cropped) plus 40 canvas-unit padding at 2x scale, independent of pan/zoom, stripping Handles, Resize Grips, and selection chrome; an empty graph exports just the padded background
   command: sh -c "grep -q 'EXPORT_PADDING = 40' src/app/models/export-image.ts && grep -q 'EXPORT_SCALE = 2' src/app/models/export-image.ts"
 - label: PNG is download-only (clipboard, link, and Drive stay JSON-only), named dropnode-graph.png on the Scratch Canvas or after the Project (slugged, fallback project.png), with a success toast; a failed render shows "Failed to export PNG" and downloads nothing
   command: grep -q "'.png'" src/app/services/export.service.ts
@@ -177,6 +181,7 @@
 - all keyboard shortcuts are ignored while focus is in an input, textarea, or contenteditable element
 - Delete or Backspace deletes the selected element — a Connection alone, or a Node with its Connections; Escape deselects and blurs the active element
 - Ctrl+X cuts and Ctrl+C copies the selected Node or Group; Ctrl+V pastes at the cursor; Ctrl+D duplicates the selected Node or Group — no selection (or an empty Clipboard for paste) is a silent no-op
+- Shift+1 runs Zoom to fit and Shift+2 Zoom to selection, keyed off event.code (Digit1/Digit2) for layout independence and suppressed by the input-focus guard @spec
 
 ## clipboard
 

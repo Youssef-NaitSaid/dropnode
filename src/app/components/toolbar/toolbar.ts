@@ -7,6 +7,7 @@ import {
   lucideZoomIn,
   lucideZoomOut,
   lucideScan,
+  lucideMaximize,
   lucideGroup,
   lucideUpload,
   lucideDownload,
@@ -49,6 +50,7 @@ import { Connection, ArrowheadType, ArrowheadEnd, effectiveArrowhead } from '../
       lucideZoomIn,
       lucideZoomOut,
       lucideScan,
+      lucideMaximize,
       lucideGroup,
       lucideUpload,
       lucideDownload,
@@ -157,6 +159,9 @@ import { Connection, ArrowheadType, ArrowheadEnd, effectiveArrowhead } from '../
         </button>
         <button hlmBtn variant="ghost" size="icon" (click)="resetView()" title="Reset View" aria-label="Reset view">
           <ng-icon name="lucideScan" />
+        </button>
+        <button hlmBtn variant="ghost" size="icon" (click)="zoomToFit()" title="Zoom to Fit" aria-label="Zoom to fit">
+          <ng-icon name="lucideMaximize" />
         </button>
         <span class="min-w-10 text-center text-sm font-medium text-muted-foreground">{{ zoomPercent() }}%</span>
         <hlm-separator orientation="vertical" class="mx-1" />
@@ -359,6 +364,14 @@ export class ToolbarComponent {
 
   resetView(): void {
     this.graphService.resetViewport();
+  }
+
+  // Frame the whole graph. Measures the visible canvas region from the canvas
+  // container (the toolbar overlaps the window top, so the window is wrong).
+  zoomToFit(): void {
+    const rect = document.querySelector('.canvas-container')?.getBoundingClientRect();
+    if (!rect) return;
+    this.graphService.zoomToFit(rect.width, rect.height);
   }
 
   undo(): void {

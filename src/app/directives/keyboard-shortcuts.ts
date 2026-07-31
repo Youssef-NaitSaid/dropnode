@@ -86,6 +86,21 @@ export class KeyboardShortcuts {
       }
     }
 
+    // Shift+1 / Shift+2: frame the whole graph / the current selection in the
+    // Viewport. Keyed off event.code (not event.key) so the shifted glyph and
+    // keyboard layout don't matter. Pure Viewport change — no History entry.
+    if (event.shiftKey && !event.ctrlKey && !event.altKey && (event.code === 'Digit1' || event.code === 'Digit2')) {
+      const rect = document.querySelector('.canvas-container')?.getBoundingClientRect();
+      if (!rect) return;
+      event.preventDefault();
+      if (event.code === 'Digit1') {
+        this.graphService.zoomToFit(rect.width, rect.height);
+      } else {
+        this.graphService.zoomToSelection(rect.width, rect.height);
+      }
+      return;
+    }
+
     // Delete/Backspace: delete whichever single element is selected
     if (event.key === 'Delete' || event.key === 'Backspace') {
       const selectedConnectionId = this.graphService.selectedConnectionId();
