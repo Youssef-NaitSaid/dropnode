@@ -1,6 +1,6 @@
 import { GraphNode, HandleSide } from './node';
 import { Connection } from './connection';
-import { graphBounds } from './bounds';
+import { Bounds, graphBounds } from './bounds';
 
 // Pure Tidy up layout (spec #26, ADR-0019). One hand-rolled Sugiyama-lite
 // pass: cycle-breaking → longest-path layering → ordering → coordinates from
@@ -337,6 +337,33 @@ function orderLayers(layers: Item[][], forward: readonly Edge[]): void {
   }
 }
 
+// Liang–Barsky: does the segment a→b pass through the rect? Used to catch
+// straight corridors that would hide behind a Node card.
+function segmentIntersectsRect(a: Point, b: Point, r: Bounds): boolean {
+  let t0 = 0;
+  let t1 = 1;
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const clip = (p: number, q: number): boolean => {
+    if (p === 0) return q >= 0;
+    const t = q / p;
+    if (p < 0) {
+      if (t > t1) return false;
+      if (t > t0) t0 = t;
+    } else {
+      if (t < t0) return false;
+      if (t < t1) t1 = t;
+    }
+    return true;
+  };
+  return (
+    clip(-dx, a.x - r.x) &&
+    clip(dx, r.x + r.width - a.x) &&
+    clip(-dy, a.y - r.y) &&
+    clip(dy, r.y + r.height - a.y)
+  );
+}
+
 // ---------------------------------------------------------------------------
 // The seam: the complete Tidy up mutation as data.
 // ---------------------------------------------------------------------------
@@ -441,23 +468,52 @@ export function tidyLayout(
     }
   }
 
-  // Handles re-picked to face the counterpart along the dominant axis of the
-  // new rects (ties fall to the horizontal, matching the left-to-right flow)
+  // Handles re-picked to follow the flow. Forward Connections face the
+  // counterpart along the dominant axis of the new rects (ties fall to the
+  // horizontal, matching the left-to-right flow) — except that a straight
+  // right→left corridor hiding behind another Node's card detours under the
+  // row via bottom Handles. A Connection pointing against the flow (only a
+  // cycle's back edge does, since layers advance rightward) arcs over the
+  // top instead: facing Handles would draw it as a straight line lying
+  // exactly on the forward segments and behind the cards between.
+  const newRect = (node: GraphNode): Bounds => {
+    const p = newPos.get(node.id)!;
+    const size = groupSize.get(node.id) ?? node;
+    return { x: p.x, y: p.y, width: size.width, height: size.height };
+  };
+  // Only regular Node cards occlude — Groups render beneath Connections
+  const occluders = nodes
+    .filter(n => n.kind !== 'group')
+    .map(n => ({ id: n.id, rect: newRect(n) }));
   for (const c of connections) {
     const source = nodeById.get(c.sourceNodeId);
     const target = nodeById.get(c.targetNodeId);
     if (!source || !target) continue;
-    const sp = newPos.get(source.id)!;
-    const tp = newPos.get(target.id)!;
-    const sSize = groupSize.get(source.id) ?? source;
-    const tSize = groupSize.get(target.id) ?? target;
-    const dx = tp.x + tSize.width / 2 - (sp.x + sSize.width / 2);
-    const dy = tp.y + tSize.height / 2 - (sp.y + sSize.height / 2);
+    const sRect = newRect(source);
+    const tRect = newRect(target);
+    const dx = tRect.x + tRect.width / 2 - (sRect.x + sRect.width / 2);
+    const dy = tRect.y + tRect.height / 2 - (sRect.y + sRect.height / 2);
     let sourceHandle: HandleSide;
     let targetHandle: HandleSide;
-    if (Math.abs(dx) >= Math.abs(dy)) {
-      sourceHandle = dx >= 0 ? 'right' : 'left';
-      targetHandle = dx >= 0 ? 'left' : 'right';
+    if (dx < 0) {
+      sourceHandle = 'top';
+      targetHandle = 'top';
+    } else if (Math.abs(dx) >= Math.abs(dy)) {
+      sourceHandle = 'right';
+      targetHandle = 'left';
+      // The chord between the two facing Handle midpoints
+      const from = { x: sRect.x + sRect.width, y: sRect.y + sRect.height / 2 };
+      const to = { x: tRect.x, y: tRect.y + tRect.height / 2 };
+      const occluded = occluders.some(
+        o =>
+          o.id !== source.id &&
+          o.id !== target.id &&
+          segmentIntersectsRect(from, to, o.rect),
+      );
+      if (occluded) {
+        sourceHandle = 'bottom';
+        targetHandle = 'bottom';
+      }
     } else {
       sourceHandle = dy > 0 ? 'bottom' : 'top';
       targetHandle = dy > 0 ? 'top' : 'bottom';

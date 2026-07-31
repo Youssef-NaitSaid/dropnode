@@ -1308,6 +1308,28 @@ describe('Commands', () => {
       expect(buildTidyUpCommand(graphService)).toBeNull();
     });
 
+    it('re-picking Handles preserves Arrowheads, color, and Text untouched', () => {
+      const a = graphService.createNode('A', 0, 0);
+      const b = graphService.createNode('B', 10, 300);
+      const conn = graphService.createConnection(a.id, 'top', b.id, 'top')!;
+      graphService.setConnectionArrowhead(conn.id, 'start', 'triangle');
+      graphService.setConnectionArrowhead(conn.id, 'end', 'none');
+      graphService.setConnectionColor(conn.id, NODE_PALETTE[2]);
+      graphService.setConnectionText(conn.id, textFromString('label'));
+
+      buildTidyUpCommand(graphService)!.execute();
+
+      // Handles turn to face the flow; every other Connection field rides along
+      expect(graphService.connections().find(c => c.id === conn.id)).toMatchObject({
+        sourceHandle: 'right',
+        targetHandle: 'left',
+        startArrowhead: 'triangle',
+        endArrowhead: 'none',
+        color: NODE_PALETTE[2],
+        text: textFromString('label'),
+      });
+    });
+
     it('neither execute nor undo touches the Selection', () => {
       const a = graphService.createNode('A', 0, 0);
       const b = graphService.createNode('B', 10, 300);
