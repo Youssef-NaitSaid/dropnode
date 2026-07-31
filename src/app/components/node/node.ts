@@ -32,6 +32,7 @@ const GROUP_FILL_ALPHA = '4D';
       [style.width.px]="node().width"
       [style.height.px]="node().height"
       [style.background]="cardBackground()"
+      [style.--selection-glow]="selectionGlow()"
       (mousedown)="onMouseDown($event)"
       (dblclick)="onDoubleClick($event)"
     >
@@ -121,12 +122,9 @@ const GROUP_FILL_ALPHA = '4D';
       box-shadow: 0 6px 20px rgba(124, 92, 255, 0.28);
     }
     .node-card.selected {
-      border-color: #7c5cff;
-      box-shadow:
-        0 0 0 7px rgba(124, 92, 255, 0.35),
-        0 8px 28px rgba(124, 92, 255, 0.55);
+      box-shadow: 0 0 0px 1px grey, 0 0 6px 2px var(--selection-glow, #f0f0f5);
     }
-    /* Lift a selected node (and its ring) above neighbouring cards */
+    /* Lift a selected node (and its glow) above neighbouring cards */
     :host:has(.node-card.selected) {
       z-index: 5;
     }
@@ -290,6 +288,10 @@ export class NodeComponent implements AfterViewInit {
     const base = this.node().color ?? DEFAULT_NODE_BACKGROUND;
     return this.isGroup() ? base + GROUP_FILL_ALPHA : base;
   });
+
+  // The selection glow tracks the element's own color identity — the solid
+  // base color, never a Group's translucent fill, so the glow stays visible
+  selectionGlow = computed(() => this.node().color ?? DEFAULT_NODE_BACKGROUND);
 
   isHandleSnapped(side: HandleSide): boolean {
     const target = this.snapTarget();
