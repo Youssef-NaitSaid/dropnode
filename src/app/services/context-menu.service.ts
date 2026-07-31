@@ -2,7 +2,10 @@ import { Injectable, inject, signal, computed } from '@angular/core';
 import { GraphService } from './graph.service';
 import { HistoryService } from './history.service';
 import { ClipboardService } from './clipboard.service';
-import { CreateNodeCommand, CreateGroupCommand, DeleteNodeCompoundCommand, DeleteConnectionCommand } from './commands';
+import {
+  CreateNodeCommand, CreateGroupCommand, DeleteNodeCompoundCommand, DeleteConnectionCommand,
+  buildDeleteSelectionCommand,
+} from './commands';
 
 /** What a right-click landed on, and — for the empty Canvas — nothing more. */
 export type ContextTarget =
@@ -36,7 +39,17 @@ export class ContextMenuService {
   readonly connectionTextRequest = signal<string | null>(null);
 
   // Which menu the thin UI should render for the currently-open context.
-  readonly menuKind = computed(() => this.target()?.kind ?? null);
+  // Right-clicking a member of a multi-Selection keeps the set and shows the
+  // multi menu; a non-member collapsed to a single target in openFor.
+  readonly menuKind = computed(() => {
+    const t = this.target();
+    if (!t) return null;
+    if (this.graphService.selectionSize() > 1) {
+      if (t.kind === 'node' && this.graphService.isNodeSelected(t.nodeId)) return 'multi';
+      if (t.kind === 'connection' && this.graphService.isConnectionSelected(t.connectionId)) return 'multi';
+    }
+    return t.kind;
+  });
 
   // A node target shows "Add node" only when it is a Group. Reads nodes()
   // inside the computed so it stays correct if the target Group is mutated.
@@ -49,8 +62,10 @@ export class ContextMenuService {
   readonly canPaste = this.clipboardService.canPaste;
 
   /**
-   * Prime the menu for a right-click: select the target first (mirroring
-   * left-click's exclusive selection), or clear selection on empty Canvas.
+   * Prime the menu for a right-click. A target that is already part of a
+   * multi-Selection keeps the whole Selection (the menu acts on the set);
+   * any other target collapses the Selection to itself, and the empty
+   * Canvas clears it.
    */
   openFor(target: ContextTarget, canvasX: number, canvasY: number): void {
     this.target.set(target);
@@ -59,13 +74,17 @@ export class ContextMenuService {
 
     switch (target.kind) {
       case 'node':
-        this.graphService.selectNode(target.nodeId);
+        if (!this.graphService.isNodeSelected(target.nodeId)) {
+          this.graphService.selectNode(target.nodeId);
+        }
         break;
       case 'connection':
-        this.graphService.selectConnection(target.connectionId);
+        if (!this.graphService.isConnectionSelected(target.connectionId)) {
+          this.graphService.selectConnection(target.connectionId);
+        }
         break;
       case 'canvas':
-        this.graphService.selectNode(null);
+        this.graphService.clearSelection();
         break;
     }
   }
@@ -188,5 +207,37 @@ export class ContextMenuService {
 
   clearConnectionTextRequest(): void {
     this.connectionTextRequest.set(null);
+  }
+
+  // Multi-Selection menu actions (ADR-0015): each acts on the whole
+  // Selection. Cut/Copy/Duplicate stay Node/Group operations — with no Node
+  // in the Selection they are silent no-ops, matching the shortcuts.
+
+  cutSelection(): void {
+    const nodeIds = this.graphService.selectedNodeIds();
+    if (nodeIds.length === 0) return;
+    this.clipboardService.cut(nodeIds, this.graphService.selectedConnectionIds());
+  }
+
+  copySelection(): void {
+    const nodeIds = this.graphService.selectedNodeIds();
+    if (nodeIds.length === 0) return;
+    this.clipboardService.copy(nodeIds);
+  }
+
+  duplicateSelection(): void {
+    const nodeIds = this.graphService.selectedNodeIds();
+    if (nodeIds.length === 0) return;
+    this.clipboardService.duplicate(nodeIds);
+  }
+
+  /** Delete the whole Selection as one compound undo step. */
+  deleteSelection(): void {
+    const cmd = buildDeleteSelectionCommand(
+      this.graphService,
+      this.graphService.selectedNodeIds(),
+      this.graphService.selectedConnectionIds(),
+    );
+    if (cmd) this.historyService.execute(cmd);
   }
 }

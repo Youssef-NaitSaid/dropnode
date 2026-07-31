@@ -22,6 +22,10 @@ import {
   SetConnectionArrowheadCommand,
   InsertElementsCommand,
   QuickAddNodeCommand,
+  buildDeleteSelectionCommand,
+  buildSetNodesColorCommand,
+  buildSetConnectionsColorCommand,
+  buildSetConnectionsArrowheadCommand,
 } from './commands';
 
 describe('Commands', () => {
@@ -765,7 +769,7 @@ describe('Commands', () => {
   // Serves Paste, Duplicate, and Alt+drag: inserts a prepared set of elements
   // (ids already generated) and undo removes exactly that set.
   describe('InsertElementsCommand', () => {
-    it('execute inserts the prepared nodes and connections and selects the primary node', () => {
+    it('execute inserts the prepared nodes and connections and selects all of them', () => {
       const existing = graphService.createNode('Existing', 0, 0);
       const nodes = [
         { id: 'node_x_101', text: textFromString('A'), x: 10, y: 20, width: 160, height: 48 },
@@ -777,19 +781,21 @@ describe('Commands', () => {
         targetNodeId: 'node_x_102', targetHandle: 'left' as const,
       }];
 
-      const cmd = new InsertElementsCommand(graphService, 'Paste', nodes, connections, 'node_x_101');
+      const cmd = new InsertElementsCommand(graphService, 'Paste', nodes, connections);
       cmd.execute();
 
       expect(graphService.nodes().map(n => n.id)).toEqual([existing.id, 'node_x_101', 'node_x_102']);
       expect(graphService.connections().map(c => c.id)).toEqual(['conn_x_103']);
-      expect(graphService.selectedNodeId()).toBe('node_x_101');
+      // The new copies become the whole Selection (ADR-0015)
+      expect(graphService.selectedNodeIds()).toEqual(['node_x_101', 'node_x_102']);
+      expect(graphService.selectedConnectionIds()).toEqual(['conn_x_103']);
     });
 
     it('undo removes exactly the inserted set and clears its selection', () => {
       const existing = graphService.createNode('Existing', 0, 0);
       const nodes = [{ id: 'node_x_201', text: textFromString('A'), x: 0, y: 0, width: 160, height: 48 }];
 
-      const cmd = new InsertElementsCommand(graphService, 'Paste', nodes, [], 'node_x_201');
+      const cmd = new InsertElementsCommand(graphService, 'Paste', nodes, []);
       cmd.execute();
       cmd.undo();
 
@@ -799,7 +805,7 @@ describe('Commands', () => {
 
     it('redo re-inserts the identical elements with the same ids', () => {
       const nodes = [{ id: 'node_x_301', text: textFromString('A'), x: 5, y: 6, width: 160, height: 48 }];
-      const cmd = new InsertElementsCommand(graphService, 'Duplicate', nodes, [], 'node_x_301');
+      const cmd = new InsertElementsCommand(graphService, 'Duplicate', nodes, []);
 
       cmd.execute();
       cmd.undo();
@@ -814,7 +820,7 @@ describe('Commands', () => {
       const spawned = graphService.createNode('Copy', 40, 40);
       const cmd = new InsertElementsCommand(
         graphService, 'Duplicate',
-        [graphService.nodes().find(n => n.id === spawned.id)!], [], spawned.id,
+        [graphService.nodes().find(n => n.id === spawned.id)!], [],
       );
 
       cmd.undo();
@@ -827,7 +833,7 @@ describe('Commands', () => {
       const cmd = new InsertElementsCommand(
         graphService, 'Paste',
         [{ id: 'node_x_401', text: textFromString('A'), x: 0, y: 0, width: 160, height: 48 }],
-        [], 'node_x_401',
+        [],
       );
       cmd.execute();
       graphService.selectNode(other.id);
@@ -989,6 +995,127 @@ describe('Commands', () => {
       expect(graphService.connections()).toMatchObject([{
         sourceNodeId: child.id, targetNodeId: spawned!.id,
       }]);
+    });
+  });
+
+  // Selection-scale factories (ADR-0015): one compound Command per bulk
+  // operation, null when nothing would change.
+  describe('buildDeleteSelectionCommand', () => {
+    it('deletes Nodes and explicitly selected Connections as one undo step, restoring original ids', () => {
+      const a = graphService.createNode('A', 0, 0);
+      const b = graphService.createNode('B', 300, 0);
+      const c = graphService.createNode('C', 600, 0);
+      const ab = graphService.createConnection(a.id, 'right', b.id, 'left')!;
+      const bc = graphService.createConnection(b.id, 'right', c.id, 'left')!;
+
+      // b and the b→c Connection are selected; a and c stay
+      const cmd = buildDeleteSelectionCommand(graphService, [b.id], [bc.id])!;
+      cmd.execute();
+
+      expect(graphService.nodes().map(n => n.id)).toEqual([a.id, c.id]);
+      // b's cascade removed ab; bc was deleted explicitly first
+      expect(graphService.connections()).toEqual([]);
+
+      cmd.undo();
+      expect(graphService.nodes().map(n => n.id).sort()).toEqual([a.id, b.id, c.id].sort());
+      expect(graphService.connections().map(cn => cn.id).sort()).toEqual([ab.id, bc.id].sort());
+    });
+
+    it('removes a selected Group WITH its children (multi-delete divergence from single Delete)', () => {
+      const group = graphService.createGroup('G', 0, 0);
+      const child = graphService.createNode('C', 40, 40);
+      graphService.setNodeParent(child.id, group.id);
+      const loose = graphService.createNode('L', 600, 0);
+
+      const cmd = buildDeleteSelectionCommand(graphService, [group.id, loose.id], [])!;
+      cmd.execute();
+
+      expect(graphService.nodes()).toEqual([]);
+
+      cmd.undo();
+      expect(graphService.nodes().map(n => n.id).sort()).toEqual([group.id, child.id, loose.id].sort());
+      expect(graphService.nodes().find(n => n.id === child.id)?.parentId).toBe(group.id);
+    });
+
+    it('returns null for an empty Selection', () => {
+      expect(buildDeleteSelectionCommand(graphService, [], [])).toBeNull();
+    });
+  });
+
+  describe('buildSetNodesColorCommand', () => {
+    it('recolors all given Nodes as one undo step, skipping ones already carrying the color', () => {
+      const a = graphService.createNode('A', 0, 0);
+      const b = graphService.createNode('B', 300, 0);
+      graphService.setNodeColor(b.id, NODE_PALETTE[0]);
+
+      const cmd = buildSetNodesColorCommand(graphService, [a.id, b.id], NODE_PALETTE[0])!;
+      cmd.execute();
+
+      expect(graphService.nodes().map(n => n.color)).toEqual([NODE_PALETTE[0], NODE_PALETTE[0]]);
+
+      cmd.undo();
+      // a reverts to default; b keeps its pre-existing color (it was a no-op part)
+      expect(graphService.nodes().find(n => n.id === a.id)?.color).toBeUndefined();
+      expect(graphService.nodes().find(n => n.id === b.id)?.color).toBe(NODE_PALETTE[0]);
+    });
+
+    it('returns null when every Node already carries the color', () => {
+      const a = graphService.createNode('A', 0, 0);
+      graphService.setNodeColor(a.id, NODE_PALETTE[1]);
+
+      expect(buildSetNodesColorCommand(graphService, [a.id], NODE_PALETTE[1])).toBeNull();
+    });
+  });
+
+  describe('buildSetConnectionsColorCommand', () => {
+    it('recolors all given Connections as one undo step', () => {
+      const a = graphService.createNode('A', 0, 0);
+      const b = graphService.createNode('B', 300, 0);
+      const c1 = graphService.createConnection(a.id, 'right', b.id, 'left')!;
+      const c2 = graphService.createConnection(a.id, 'top', b.id, 'top')!;
+
+      const cmd = buildSetConnectionsColorCommand(graphService, [c1.id, c2.id], NODE_PALETTE[2])!;
+      cmd.execute();
+      expect(graphService.connections().map(cn => cn.color)).toEqual([NODE_PALETTE[2], NODE_PALETTE[2]]);
+
+      cmd.undo();
+      expect(graphService.connections().map(cn => cn.color)).toEqual([undefined, undefined]);
+    });
+
+    it('returns null when nothing would change', () => {
+      const a = graphService.createNode('A', 0, 0);
+      const b = graphService.createNode('B', 300, 0);
+      const c1 = graphService.createConnection(a.id, 'right', b.id, 'left')!;
+
+      expect(buildSetConnectionsColorCommand(graphService, [c1.id], null)).toBeNull();
+    });
+  });
+
+  describe('buildSetConnectionsArrowheadCommand', () => {
+    it('restyles one end of all given Connections as one undo step, skipping no-ops', () => {
+      const a = graphService.createNode('A', 0, 0);
+      const b = graphService.createNode('B', 300, 0);
+      const c1 = graphService.createConnection(a.id, 'right', b.id, 'left')!;
+      const c2 = graphService.createConnection(a.id, 'top', b.id, 'top')!;
+      graphService.setConnectionArrowhead(c2.id, 'end', 'triangle');
+
+      const cmd = buildSetConnectionsArrowheadCommand(graphService, [c1.id, c2.id], 'end', 'triangle')!;
+      cmd.execute();
+      expect(graphService.connections().map(cn => cn.endArrowhead)).toEqual(['triangle', 'triangle']);
+
+      cmd.undo();
+      // c1 reverts to its default end arrow (absent field); c2 keeps triangle
+      expect(graphService.connections().find(cn => cn.id === c1.id)?.endArrowhead).toBeUndefined();
+      expect(graphService.connections().find(cn => cn.id === c2.id)?.endArrowhead).toBe('triangle');
+    });
+
+    it('returns null when every Connection already shows the type', () => {
+      const a = graphService.createNode('A', 0, 0);
+      const b = graphService.createNode('B', 300, 0);
+      const c1 = graphService.createConnection(a.id, 'right', b.id, 'left')!;
+
+      // 'arrow' is the effective default at the end — already showing
+      expect(buildSetConnectionsArrowheadCommand(graphService, [c1.id], 'end', 'arrow')).toBeNull();
     });
   });
 });

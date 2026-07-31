@@ -446,7 +446,7 @@ describe('GraphService', () => {
     });
   });
 
-  describe('exclusive selection across Nodes and Connections', () => {
+  describe('single-select replace semantics across Nodes and Connections', () => {
     function makeConnection() {
       const node1 = service.createNode('Node 1', 0, 0);
       const node2 = service.createNode('Node 2', 300, 0);
@@ -1641,6 +1641,179 @@ describe('GraphService', () => {
       } as GraphState);
 
       expect(service.nodes().map(n => n.id)).toEqual([keep.id]);
+    });
+  });
+
+  describe('Selection set (ADR-0015)', () => {
+    function makeGraph() {
+      const a = service.createNode('A', 0, 0);
+      const b = service.createNode('B', 300, 0);
+      const conn = service.createConnection(a.id, 'right', b.id, 'left')!;
+      return { a, b, conn };
+    }
+
+    it('setSelection replaces the Selection with a mixed set', () => {
+      const { a, b, conn } = makeGraph();
+      service.selectNode(b.id);
+
+      service.setSelection([a.id], [conn.id]);
+
+      expect(service.selectedNodeIds()).toEqual([a.id]);
+      expect(service.selectedConnectionIds()).toEqual([conn.id]);
+      expect(service.isNodeSelected(a.id)).toBe(true);
+      expect(service.isNodeSelected(b.id)).toBe(false);
+      expect(service.isConnectionSelected(conn.id)).toBe(true);
+      expect(service.selectionSize()).toBe(2);
+    });
+
+    it('selectNode collapses a mixed Selection to the single Node', () => {
+      const { a, b, conn } = makeGraph();
+      service.setSelection([a.id, b.id], [conn.id]);
+
+      service.selectNode(a.id);
+
+      expect(service.selectedNodeIds()).toEqual([a.id]);
+      expect(service.selectedConnectionIds()).toEqual([]);
+    });
+
+    it('selectConnection collapses a mixed Selection to the single Connection', () => {
+      const { a, conn } = makeGraph();
+      service.setSelection([a.id], []);
+
+      service.selectConnection(conn.id);
+
+      expect(service.selectedNodeIds()).toEqual([]);
+      expect(service.selectedConnectionIds()).toEqual([conn.id]);
+    });
+
+    it('toggleNodeSelection adds an unselected Node and removes a selected one', () => {
+      const { a, b } = makeGraph();
+      service.selectNode(a.id);
+
+      service.toggleNodeSelection(b.id);
+      expect(service.selectedNodeIds()).toEqual([a.id, b.id]);
+
+      service.toggleNodeSelection(a.id);
+      expect(service.selectedNodeIds()).toEqual([b.id]);
+    });
+
+    it('toggleConnectionSelection toggles membership without touching Nodes', () => {
+      const { a, conn } = makeGraph();
+      service.selectNode(a.id);
+
+      service.toggleConnectionSelection(conn.id);
+      expect(service.selectedNodeIds()).toEqual([a.id]);
+      expect(service.selectedConnectionIds()).toEqual([conn.id]);
+
+      service.toggleConnectionSelection(conn.id);
+      expect(service.selectedConnectionIds()).toEqual([]);
+    });
+
+    it('addToSelection unions without duplicating members', () => {
+      const { a, b, conn } = makeGraph();
+      service.setSelection([a.id], []);
+
+      service.addToSelection([a.id, b.id], [conn.id]);
+
+      expect(service.selectedNodeIds()).toEqual([a.id, b.id]);
+      expect(service.selectedConnectionIds()).toEqual([conn.id]);
+    });
+
+    it('normalizes a Group and its own child down to the Group (group-as-unit)', () => {
+      const group = service.createGroup('G', 0, 0);
+      const child = service.createNode('C', 40, 40);
+      service.setNodeParent(child.id, group.id);
+
+      service.setSelection([group.id, child.id], []);
+
+      expect(service.selectedNodeIds()).toEqual([group.id]);
+    });
+
+    it('keeps a child selectable on its own when its Group is not selected', () => {
+      const group = service.createGroup('G', 0, 0);
+      const child = service.createNode('C', 40, 40);
+      service.setNodeParent(child.id, group.id);
+
+      service.setSelection([child.id], []);
+
+      expect(service.selectedNodeIds()).toEqual([child.id]);
+    });
+
+    it('selectAll selects Groups as units, loose Nodes, and all Connections', () => {
+      const { a, b, conn } = makeGraph();
+      const group = service.createGroup('G', 500, 500);
+      const child = service.createNode('C', 520, 520);
+      service.setNodeParent(child.id, group.id);
+
+      service.selectAll();
+
+      expect(service.selectedNodeIds()).toEqual([a.id, b.id, group.id]);
+      expect(service.selectedConnectionIds()).toEqual([conn.id]);
+    });
+
+    it('clearSelection empties both sets', () => {
+      const { a, conn } = makeGraph();
+      service.setSelection([a.id], [conn.id]);
+
+      service.clearSelection();
+
+      expect(service.selectedNodeIds()).toEqual([]);
+      expect(service.selectedConnectionIds()).toEqual([]);
+      expect(service.selectionSize()).toBe(0);
+    });
+
+    it('deleteNode prunes only that Node from a multi-Selection', () => {
+      const { a, b, conn } = makeGraph();
+      service.setSelection([a.id, b.id], [conn.id]);
+
+      service.deleteNode(b.id);
+
+      expect(service.selectedNodeIds()).toEqual([a.id]);
+      // the cascade also removed the Connection, which leaves the Selection
+      expect(service.selectedConnectionIds()).toEqual([]);
+    });
+
+    it('deleteConnection prunes only that Connection from a multi-Selection', () => {
+      const { a, b, conn } = makeGraph();
+      const other = service.createConnection(a.id, 'top', b.id, 'top')!;
+      service.setSelection([], [conn.id, other.id]);
+
+      service.deleteConnection(conn.id);
+
+      expect(service.selectedConnectionIds()).toEqual([other.id]);
+    });
+
+    it('selectedNodeId reports the sole selected Node, and null for multi or mixed sets', () => {
+      const { a, b, conn } = makeGraph();
+
+      service.setSelection([a.id], []);
+      expect(service.selectedNodeId()).toBe(a.id);
+      expect(service.selectedNode()?.id).toBe(a.id);
+
+      service.setSelection([a.id, b.id], []);
+      expect(service.selectedNodeId()).toBeNull();
+
+      service.setSelection([a.id], [conn.id]);
+      expect(service.selectedNodeId()).toBeNull();
+    });
+
+    it('selectedConnectionId reports the sole selected Connection, and null otherwise', () => {
+      const { a, conn } = makeGraph();
+
+      service.setSelection([], [conn.id]);
+      expect(service.selectedConnectionId()).toBe(conn.id);
+
+      service.setSelection([a.id], [conn.id]);
+      expect(service.selectedConnectionId()).toBeNull();
+    });
+
+    it('importGraph clears a multi-Selection', () => {
+      const { a, conn } = makeGraph();
+      service.setSelection([a.id], [conn.id]);
+
+      service.importGraph({ nodes: [], connections: [] });
+
+      expect(service.selectionSize()).toBe(0);
     });
   });
 });

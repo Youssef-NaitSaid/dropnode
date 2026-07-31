@@ -525,11 +525,9 @@ export class QuickAddNodeCommand implements Command {
 
   undo(): void {
     if (!this.node) return;
-    // deleteNode cascade-deletes the Connection created alongside
+    // deleteNode cascade-deletes the Connection created alongside and prunes
+    // the spawned Node from the Selection
     this.graphService.deleteNode(this.node.id);
-    if (this.graphService.selectedNodeId() === this.node.id) {
-      this.graphService.selectNode(null);
-    }
   }
 
   getNodeId(): string | null {
@@ -550,7 +548,6 @@ export class InsertElementsCommand implements Command {
     public description: string,
     nodes: GraphNode[],
     connections: Connection[],
-    private primaryNodeId: string,
   ) {
     // Deep copy so later graph mutations can't alias into the redo snapshot
     this.nodes = structuredClone(nodes);
@@ -562,7 +559,12 @@ export class InsertElementsCommand implements Command {
     if (this.connections.length > 0) {
       this.graphService.connections.update(conns => [...conns, ...structuredClone(this.connections)]);
     }
-    this.graphService.selectNode(this.primaryNodeId);
+    // The new copies become the Selection (ADR-0015); normalization keeps
+    // inserted Group children implicit
+    this.graphService.setSelection(
+      this.nodes.map(n => n.id),
+      this.connections.map(c => c.id),
+    );
   }
 
   undo(): void {
@@ -570,12 +572,103 @@ export class InsertElementsCommand implements Command {
     const connIds = new Set(this.connections.map(c => c.id));
     this.graphService.nodes.update(nodes => nodes.filter(n => !nodeIds.has(n.id)));
     this.graphService.connections.update(conns => conns.filter(c => !connIds.has(c.id)));
-    if (nodeIds.has(this.graphService.selectedNodeId() ?? '')) {
-      this.graphService.selectNode(null);
-    }
-    const selectedConn = this.graphService.selectedConnectionId();
-    if (selectedConn && connIds.has(selectedConn)) {
-      this.graphService.selectedConnectionId.set(null);
-    }
+    // Removed elements leave the Selection; anything else selected stays
+    this.graphService.setSelection(
+      this.graphService.selectedNodeIds().filter(id => !nodeIds.has(id)),
+      this.graphService.selectedConnectionIds().filter(id => !connIds.has(id)),
+    );
   }
+}
+
+// ---------------------------------------------------------------------------
+// Selection-scale factories (ADR-0015): each builds ONE compound Command for
+// an operation over the whole Selection, so bulk gestures stay single undo
+// steps. All return null when the operation would change nothing.
+// ---------------------------------------------------------------------------
+
+/**
+ * Delete the whole Selection as one undo step. Explicitly selected
+ * Connections go first; then, per selected Group, its children and the Group
+ * itself (a Group in a multi-delete is removed WITH its children — the
+ * deliberate divergence from single-Group Delete, which releases them);
+ * loose selected Nodes last. Node deletion cascades touching Connections.
+ */
+export function buildDeleteSelectionCommand(
+  graphService: GraphService,
+  nodeIds: readonly string[],
+  connectionIds: readonly string[],
+): Command | null {
+  const parts: Command[] = [];
+
+  for (const connId of connectionIds) {
+    parts.push(new DeleteConnectionCommand(graphService, connId));
+  }
+
+  const nodes = graphService.nodes();
+  for (const nodeId of nodeIds) {
+    const node = nodes.find(n => n.id === nodeId);
+    if (!node) continue;
+    if (node.kind === 'group') {
+      // Children first, then the Group: reverse-order undo restores the
+      // Group before the children re-claim their parentId (Cut precedent)
+      for (const child of nodes.filter(n => n.parentId === nodeId)) {
+        parts.push(new DeleteNodeCommand(graphService, child.id));
+      }
+    }
+    parts.push(new DeleteNodeCommand(graphService, nodeId));
+  }
+
+  return parts.length > 0 ? new CompoundCommand('Delete Selection', parts) : null;
+}
+
+/**
+ * Recolor every given Node as one undo step, skipping Nodes already carrying
+ * the color so unchanged elements add no dead undo weight.
+ */
+export function buildSetNodesColorCommand(
+  graphService: GraphService,
+  nodeIds: readonly string[],
+  color: string | null,
+): Command | null {
+  const nodes = graphService.nodes();
+  const parts = nodeIds
+    .filter(id => {
+      const node = nodes.find(n => n.id === id);
+      return node !== undefined && (node.color ?? null) !== color;
+    })
+    .map(id => new SetNodeColorCommand(graphService, id, color));
+  return parts.length > 0 ? new CompoundCommand('Set Node Color', parts) : null;
+}
+
+/** Recolor every given Connection as one undo step, skipping no-ops. */
+export function buildSetConnectionsColorCommand(
+  graphService: GraphService,
+  connectionIds: readonly string[],
+  color: string | null,
+): Command | null {
+  const conns = graphService.connections();
+  const parts = connectionIds
+    .filter(id => {
+      const conn = conns.find(c => c.id === id);
+      return conn !== undefined && (conn.color ?? null) !== color;
+    })
+    .map(id => new SetConnectionColorCommand(graphService, id, color));
+  return parts.length > 0 ? new CompoundCommand('Set Connection Color', parts) : null;
+}
+
+/** Restyle one Arrowhead end of every given Connection as one undo step, skipping no-ops. */
+export function buildSetConnectionsArrowheadCommand(
+  graphService: GraphService,
+  connectionIds: readonly string[],
+  end: ArrowheadEnd,
+  type: ArrowheadType,
+): Command | null {
+  const conns = graphService.connections();
+  const parts = connectionIds
+    .filter(id => {
+      const conn = conns.find(c => c.id === id);
+      return conn !== undefined && effectiveArrowhead(conn, end) !== type;
+    })
+    .map(id => new SetConnectionArrowheadCommand(graphService, id, end, type));
+  return parts.length > 0 ? new CompoundCommand('Set Connection Arrowhead', parts) : null;
 }

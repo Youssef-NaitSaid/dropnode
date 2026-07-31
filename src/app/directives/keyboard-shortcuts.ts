@@ -3,7 +3,9 @@ import { GraphService } from '../services/graph.service';
 import { HistoryService } from '../services/history.service';
 import { SidebarService } from '../services/sidebar.service';
 import { ClipboardService } from '../services/clipboard.service';
-import { DeleteConnectionCommand, DeleteNodeCompoundCommand } from '../services/commands';
+import {
+  DeleteConnectionCommand, DeleteNodeCompoundCommand, buildDeleteSelectionCommand,
+} from '../services/commands';
 
 @Directive({
   selector: '[appKeyboardShortcuts]',
@@ -44,26 +46,35 @@ export class KeyboardShortcuts {
       return;
     }
 
-    // Clipboard shortcuts apply to the selected Node or Group only; no
+    // Clipboard shortcuts apply to the selected Nodes and Groups only; no
     // selection (or an empty Clipboard for paste) is a silent no-op
     if (event.ctrlKey && !event.shiftKey && !event.altKey) {
       const key = event.key.toLowerCase();
-      const selectedId = this.graphService.selectedNodeId();
+      const selectedNodeIds = this.graphService.selectedNodeIds();
 
-      // Ctrl+X: Cut the selected Node or Group
+      // Ctrl+A: select the whole graph — Groups as units, loose Nodes, and
+      // all Connections (ADR-0015)
+      if (key === 'a') {
+        event.preventDefault();
+        this.graphService.selectAll();
+        return;
+      }
+
+      // Ctrl+X: Cut the Selection's Nodes and Groups (explicitly selected
+      // Connections are removed too, though danglers are never copied)
       if (key === 'x') {
-        if (selectedId) {
+        if (selectedNodeIds.length > 0) {
           event.preventDefault();
-          this.clipboardService.cut(selectedId);
+          this.clipboardService.cut(selectedNodeIds, this.graphService.selectedConnectionIds());
         }
         return;
       }
 
-      // Ctrl+C: Copy the selected Node or Group (never touches History)
+      // Ctrl+C: Copy the Selection's Nodes and Groups (never touches History)
       if (key === 'c') {
-        if (selectedId) {
+        if (selectedNodeIds.length > 0) {
           event.preventDefault();
-          this.clipboardService.copy(selectedId);
+          this.clipboardService.copy(selectedNodeIds);
         }
         return;
       }
@@ -75,12 +86,12 @@ export class KeyboardShortcuts {
         return;
       }
 
-      // Ctrl+D: Duplicate the selected Node or Group (Clipboard untouched);
-      // preventDefault suppresses the browser's bookmark dialog
+      // Ctrl+D: Duplicate the Selection's Nodes and Groups (Clipboard
+      // untouched); preventDefault suppresses the browser's bookmark dialog
       if (key === 'd') {
         event.preventDefault();
-        if (selectedId) {
-          this.clipboardService.duplicate(selectedId);
+        if (selectedNodeIds.length > 0) {
+          this.clipboardService.duplicate(selectedNodeIds);
         }
         return;
       }
@@ -101,8 +112,21 @@ export class KeyboardShortcuts {
       return;
     }
 
-    // Delete/Backspace: delete whichever single element is selected
+    // Delete/Backspace: delete the Selection. A single element keeps its
+    // exact single-target Command (a lone Group still releases children); a
+    // multi-Selection deletes as one compound step where a Group is removed
+    // WITH its children (ADR-0015).
     if (event.key === 'Delete' || event.key === 'Backspace') {
+      if (this.graphService.selectionSize() > 1) {
+        event.preventDefault();
+        const cmd = buildDeleteSelectionCommand(
+          this.graphService,
+          this.graphService.selectedNodeIds(),
+          this.graphService.selectedConnectionIds(),
+        );
+        if (cmd) this.historyService.execute(cmd);
+        return;
+      }
       const selectedConnectionId = this.graphService.selectedConnectionId();
       if (selectedConnectionId) {
         event.preventDefault();
@@ -119,9 +143,9 @@ export class KeyboardShortcuts {
       return;
     }
 
-    // Escape: Deselect
+    // Escape: clear the whole Selection
     if (event.key === 'Escape') {
-      this.graphService.selectNode(null);
+      this.graphService.clearSelection();
       (document.activeElement as HTMLElement)?.blur();
       return;
     }

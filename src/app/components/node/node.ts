@@ -81,7 +81,7 @@ const GROUP_FILL_ALPHA = '4D';
         />
       }
 
-      @if (isSelected() && !isEditing()) {
+      @if (soleSelected() && !isEditing()) {
         @for (corner of gripCorners; track corner) {
           <div
             class="grip"
@@ -225,6 +225,9 @@ const GROUP_FILL_ALPHA = '4D';
 export class NodeComponent implements AfterViewInit {
   node = input.required<GraphNode>();
   isSelected = input(false);
+  // True only when this node IS the entire Selection — Resize Grips are a
+  // single-element affordance (ADR-0015)
+  soleSelected = input(false);
   snapTarget = input<{ nodeId: string; handle: HandleSide } | null>(null);
 
   startMove = output<{ nodeId: string; event: MouseEvent }>();
