@@ -3,6 +3,7 @@ import { GraphNode, HandleSide, oppositeHandle } from '../models/node';
 import { Connection, ArrowheadType, ArrowheadEnd, effectiveArrowhead, defaultArrowhead } from '../models/connection';
 import { Text } from '../models/text';
 import { AlignKind, DistributeAxis, RootRect, TargetPosition, alignRects, distributeRects } from '../models/align-distribute';
+import { TidyResult, applyTidyToState, isTidyEmpty, tidyLayout } from '../models/tidy-layout';
 import { GraphService } from './graph.service';
 
 export class CreateNodeCommand implements Command {
@@ -733,4 +734,63 @@ export function buildDistributeSelectionCommand(
   const parts = movePartsFor(graphService, roots, distributeRects(rects, axis));
   const description = axis === 'horizontal' ? 'Distribute horizontally' : 'Distribute vertically';
   return parts.length > 0 ? new CompoundCommand(description, parts) : null;
+}
+
+// Tidy up (spec #26, ADR-0019): the whole-graph layered layout as ONE undo
+// step. The pure module computes the complete mutation; this Command applies
+// it via applyTidyToState and undoes it from a before-snapshot of exactly the
+// touched fields — positions, Group rects, and Connection Handles. The
+// Selection is never read or written.
+export class TidyUpCommand implements Command {
+  description = 'Tidy up';
+  private inverse: TidyResult;
+
+  constructor(
+    private graphService: GraphService,
+    private result: TidyResult,
+  ) {
+    const nodeById = new Map(graphService.nodes().map(n => [n.id, n]));
+    const connById = new Map(graphService.connections().map(c => [c.id, c]));
+    this.inverse = {
+      nodePositions: result.nodePositions.map(p => {
+        const n = nodeById.get(p.id)!;
+        return { id: p.id, x: n.x, y: n.y };
+      }),
+      groupRects: result.groupRects.map(r => {
+        const n = nodeById.get(r.id)!;
+        return { id: r.id, x: n.x, y: n.y, width: n.width, height: n.height };
+      }),
+      handleAssignments: result.handleAssignments.map(h => {
+        const c = connById.get(h.id)!;
+        return { id: h.id, sourceHandle: c.sourceHandle, targetHandle: c.targetHandle };
+      }),
+    };
+  }
+
+  execute(): void {
+    this.apply(this.result);
+  }
+
+  undo(): void {
+    this.apply(this.inverse);
+  }
+
+  private apply(result: TidyResult): void {
+    const applied = applyTidyToState(
+      this.graphService.nodes(),
+      this.graphService.connections(),
+      result,
+    );
+    this.graphService.nodes.set(applied.nodes);
+    this.graphService.connections.set(applied.connections);
+  }
+}
+
+/**
+ * Tidy up the whole graph as one undo step. Null when there is nothing to
+ * do — an empty graph or one that is already tidy pushes no History entry.
+ */
+export function buildTidyUpCommand(graphService: GraphService): Command | null {
+  const result = tidyLayout(graphService.nodes(), graphService.connections());
+  return isTidyEmpty(result) ? null : new TidyUpCommand(graphService, result);
 }
