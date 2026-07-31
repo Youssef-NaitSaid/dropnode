@@ -33,7 +33,8 @@ import { NodeComponent, GripCorner } from '../node/node';
 import { ConnectionLayerComponent } from '../connection-layer/connection-layer';
 import { HandleSide, GraphNode } from '../../models/node';
 import { TEXT_POSITION_DEFAULT } from '../../models/connection';
-import { Rect, normalizedRect, marqueeSelection } from '../../models/marquee';
+import { Rect, normalizedRect, marqueeSelection, rectsOverlap } from '../../models/marquee';
+import { computeAlignment, computeResizeAlignment, ALIGNMENT_SNAP_THRESHOLD, AlignmentGuide, MovingEdges } from '../../models/alignment';
 import { Text } from '../../models/text';
 
 @Component({
@@ -119,6 +120,18 @@ import { Text } from '../../models/text';
               [style.top.px]="rect.y"
               [style.width.px]="rect.width"
               [style.height.px]="rect.height"
+            ></div>
+          }
+
+          <!-- Alignment Guides (issue #22, ADR-0017): transient red lines while
+               dragging, in canvas coordinates, a constant 1px on screen via 1/zoom -->
+          @for (guide of alignmentGuides(); track $index) {
+            <div
+              class="alignment-guide"
+              [style.left.px]="guide.orientation === 'vertical' ? guide.position - guideThickness() / 2 : guide.start"
+              [style.top.px]="guide.orientation === 'vertical' ? guide.start : guide.position - guideThickness() / 2"
+              [style.width.px]="guide.orientation === 'vertical' ? guideThickness() : guide.end - guide.start"
+              [style.height.px]="guide.orientation === 'vertical' ? guide.end - guide.start : guideThickness()"
             ></div>
           }
         </div>
@@ -248,6 +261,12 @@ import { Text } from '../../models/text';
       pointer-events: none;
       z-index: 10;
     }
+    .alignment-guide {
+      position: absolute;
+      background: #ff6b6b;
+      pointer-events: none;
+      z-index: 20;
+    }
     .canvas-transform {
       position: absolute;
       top: 0;
@@ -305,6 +324,10 @@ export class CanvasComponent {
   private resizeMinWidth = 120;
   private resizeMinHeight = 48;
   private resizeStartRect: NodeRect | null = null;
+  // Same 2px latch as node drags: Alignment Snap never fires on a grip click
+  private resizeStartClientX = 0;
+  private resizeStartClientY = 0;
+  private resizeMoved = false;
 
   // Pan state (ADR-0016: Space+drag and middle-mouse-drag; empty-canvas
   // left-drag is the Marquee)
@@ -324,6 +347,12 @@ export class CanvasComponent {
   private marqueeStartClientY = 0;
   private marqueeBase: { nodeIds: readonly string[]; connectionIds: readonly string[] } | null = null;
   readonly marqueeRect = signal<Rect | null>(null);
+
+  // Alignment Guides (issue #22) — transient lines shown during a node drag,
+  // set each mousemove and cleared on mouseup. Never part of Graph State.
+  readonly alignmentGuides = signal<AlignmentGuide[]>([]);
+  // Guide lines render a constant 1px on screen regardless of zoom (ADR-0017)
+  protected guideThickness = computed(() => 1 / this.graphService.viewportState().zoom);
 
   // Connection drag state — track source info for CreateConnectionCommand on drop;
   // the moved flag is the standard 2px (canvas-unit) guard that keeps a stray
@@ -366,6 +395,60 @@ export class CanvasComponent {
     if (!container) return null;
     const rect = container.getBoundingClientRect();
     return this.screenToCanvas(clientX - rect.left, clientY - rect.top);
+  }
+
+  // The visible Canvas region in canvas coordinates — the Alignment candidate
+  // scope (Viewport-only, ADR-0017). Null when the container isn't in the DOM.
+  private viewportCanvasRect(): Rect | null {
+    const container = document.querySelector('.canvas-container');
+    if (!container) return null;
+    const rect = container.getBoundingClientRect();
+    const tl = this.screenToCanvas(0, 0);
+    const br = this.screenToCanvas(rect.width, rect.height);
+    return { x: tl.x, y: tl.y, width: br.x - tl.x, height: br.y - tl.y };
+  }
+
+  // Alignment candidates: every visible Node (Groups included) outside the
+  // moving set — Viewport-only per ADR-0017.
+  private visibleRectsExcluding(moving: Set<string>): Rect[] {
+    const view = this.viewportCanvasRect();
+    return this.graphService.nodes()
+      .filter(n => !moving.has(n.id))
+      .map(n => ({ x: n.x, y: n.y, width: n.width, height: n.height }))
+      .filter(r => !view || rectsOverlap(r, view));
+  }
+
+  // Alignment for the current node drag at the given raw (un-snapped) delta:
+  // aligns the moving set's bounding rect against the visible Nodes outside it,
+  // returning the snap offset and the guide lines to draw (issue #22).
+  private computeDragAlignment(rawDx: number, rawDy: number): { dx: number; dy: number; guides: AlignmentGuide[] } {
+    const nodes = this.graphService.nodes();
+    const byId = new Map(nodes.map(n => [n.id, n]));
+
+    // The moving set: every dragged root plus the children of any Group root
+    const moving = new Set<string>();
+    for (const root of this.dragRoots) {
+      moving.add(root.id);
+      if (root.isGroup) {
+        for (const child of this.graphService.childrenOf(root.id)) moving.add(child.id);
+      }
+    }
+
+    // The dragged reference: the union of the roots' own rects at the raw
+    // offset (a Group aligns by its own rect)
+    const rootRects: Rect[] = [];
+    for (const root of this.dragRoots) {
+      const node = byId.get(root.id);
+      if (node) rootRects.push({ x: root.startX + rawDx, y: root.startY + rawDy, width: node.width, height: node.height });
+    }
+    if (rootRects.length === 0) return { dx: 0, dy: 0, guides: [] };
+
+    const zoom = this.graphService.viewportState().zoom;
+    return computeAlignment(
+      unionRect(rootRects),
+      this.visibleRectsExcluding(moving),
+      ALIGNMENT_SNAP_THRESHOLD / zoom,
+    );
   }
 
   onCanvasDoubleClick(event: MouseEvent): void {
@@ -538,6 +621,9 @@ export class CanvasComponent {
     this.resizeMinWidth = event.minWidth;
     this.resizeMinHeight = event.minHeight;
     this.resizeStartRect = { x: node.x, y: node.y, width: node.width, height: node.height };
+    this.resizeStartClientX = event.event.clientX;
+    this.resizeStartClientY = event.event.clientY;
+    this.resizeMoved = false;
     // The opposite corner stays anchored during the drag
     this.resizeAnchorX = event.corner === 'nw' || event.corner === 'sw' ? node.x + node.width : node.x;
     this.resizeAnchorY = event.corner === 'nw' || event.corner === 'ne' ? node.y + node.height : node.y;
@@ -579,11 +665,21 @@ export class CanvasComponent {
 
     if (this.isDraggingNode && this.dragRoots.length > 0) {
       const vp = this.graphService.viewportState();
-      const dx = (event.clientX - this.dragStartX) / vp.zoom;
-      const dy = (event.clientY - this.dragStartY) / vp.zoom;
+      let dx = (event.clientX - this.dragStartX) / vp.zoom;
+      let dy = (event.clientY - this.dragStartY) / vp.zoom;
 
       if (Math.abs(dx) > 2 || Math.abs(dy) > 2) {
         this.hasMoved = true;
+      }
+
+      // Alignment Guides & snap (issue #22): only once the drag crosses the 2px
+      // threshold, so a click with a small jiggle never snaps or shows guides.
+      // Fold the snap offset into the delta so the whole moving set shifts as one.
+      if (this.hasMoved) {
+        const alignment = this.computeDragAlignment(dx, dy);
+        dx += alignment.dx;
+        dy += alignment.dy;
+        this.alignmentGuides.set(alignment.guides);
       }
 
       // Rigid translate: every root shifts by the same delta, bypassing
@@ -629,10 +725,42 @@ export class CanvasComponent {
     if (this.isResizingNode && this.resizeNodeId && this.resizeCorner) {
       const cursor = this.clientPointToCanvas(event.clientX, event.clientY);
       if (cursor) {
-        const width = Math.max(this.resizeMinWidth, Math.abs(cursor.x - this.resizeAnchorX));
-        const height = Math.max(this.resizeMinHeight, Math.abs(cursor.y - this.resizeAnchorY));
+        const vp = this.graphService.viewportState();
+        if (
+          Math.abs((event.clientX - this.resizeStartClientX) / vp.zoom) > 2 ||
+          Math.abs((event.clientY - this.resizeStartClientY) / vp.zoom) > 2
+        ) {
+          this.resizeMoved = true;
+        }
+
         const west = this.resizeCorner === 'nw' || this.resizeCorner === 'sw';
         const north = this.resizeCorner === 'nw' || this.resizeCorner === 'ne';
+
+        // Alignment Snap for resize (issue #22): the two moving edges sit at
+        // the cursor, so snapping the cursor point snaps the edges. Clamps
+        // below still win — an overridden snap shows no guide. Each axis only
+        // snaps while the cursor is on the grip corner's side of the anchor;
+        // crossed over, the normalized rect's "moving" edge would be the anchor.
+        let edgeX = cursor.x;
+        let edgeY = cursor.y;
+        const moving: MovingEdges = { vertical: west ? 'left' : 'right', horizontal: north ? 'top' : 'bottom' };
+        const candidates = this.resizeMoved ? this.visibleRectsExcluding(new Set([this.resizeNodeId])) : [];
+        if (this.resizeMoved) {
+          const rawRect: Rect = {
+            x: Math.min(cursor.x, this.resizeAnchorX),
+            y: Math.min(cursor.y, this.resizeAnchorY),
+            width: Math.abs(cursor.x - this.resizeAnchorX),
+            height: Math.abs(cursor.y - this.resizeAnchorY),
+          };
+          const alignment = computeResizeAlignment(rawRect, moving, candidates, ALIGNMENT_SNAP_THRESHOLD / vp.zoom);
+          const validX = west ? cursor.x < this.resizeAnchorX : cursor.x > this.resizeAnchorX;
+          const validY = north ? cursor.y < this.resizeAnchorY : cursor.y > this.resizeAnchorY;
+          if (validX) edgeX += alignment.dx;
+          if (validY) edgeY += alignment.dy;
+        }
+
+        const width = Math.max(this.resizeMinWidth, Math.abs(edgeX - this.resizeAnchorX));
+        const height = Math.max(this.resizeMinHeight, Math.abs(edgeY - this.resizeAnchorY));
         const rect: NodeRect = {
           x: west ? this.resizeAnchorX - width : this.resizeAnchorX,
           y: north ? this.resizeAnchorY - height : this.resizeAnchorY,
@@ -640,7 +768,15 @@ export class CanvasComponent {
           height,
         };
         // Transient: the service clamps Groups around their children
-        this.graphService.resizeNode(this.resizeNodeId, rect);
+        const applied = this.graphService.resizeNode(this.resizeNodeId, rect);
+        // Guides from the APPLIED rect at threshold 0: only exact landings
+        // survive the min-size and Group-padding clamps
+        const guides = this.resizeMoved
+          ? computeResizeAlignment(applied, moving, candidates, 0).guides
+          : [];
+        if (guides.length > 0 || this.alignmentGuides().length > 0) {
+          this.alignmentGuides.set(guides);
+        }
       }
     }
 
@@ -728,9 +864,17 @@ export class CanvasComponent {
         this.clipboardService.commitSpawnedDuplicate();
       }
     } else if (this.isDraggingNode && this.hasMoved && this.dragRoots.length > 0) {
-      if (this.dragRoots.length > 1 || this.dragIsSelectionDrag) {
+      const byId = new Map(this.graphService.nodes().map(n => [n.id, n]));
+      // Alignment Snap can pull a nudged drag back to its exact origin; commit
+      // nothing when nothing actually moved, so there's no dead undo step (#22)
+      const movedAny = this.dragRoots.some(root => {
+        const n = byId.get(root.id);
+        // Epsilon, not exact equality: Alignment Snap's arithmetic can leave a
+        // sub-ulp residue when it returns a root to its start (issue #22)
+        return !!n && (Math.abs(n.x - root.startX) > 1e-6 || Math.abs(n.y - root.startY) > 1e-6);
+      });
+      if (movedAny && (this.dragRoots.length > 1 || this.dragIsSelectionDrag)) {
         // Multi-Selection drag: one compound undo step, membership frozen
-        const byId = new Map(this.graphService.nodes().map(n => [n.id, n]));
         const parts = this.dragRoots
           .map(root => {
             const node = byId.get(root.id);
@@ -743,9 +887,9 @@ export class CanvasComponent {
         if (parts.length > 0) {
           this.historyService.pushWithoutExecute(new CompoundCommand('Move Selection', parts));
         }
-      } else {
+      } else if (movedAny) {
         const root = this.dragRoots[0];
-        const node = this.graphService.nodes().find(n => n.id === root.id);
+        const node = byId.get(root.id);
         if (node && root.isGroup) {
           // A Group drag moved its children rigidly; one undo step for all of it
           const cmd = new MoveGroupCommand(
@@ -811,6 +955,7 @@ export class CanvasComponent {
     this.dragIsSelectionDrag = false;
     this.dragCollapseToId = null;
     this.dragIsSpawnedDuplicate = false;
+    if (this.alignmentGuides().length > 0) this.alignmentGuides.set([]);
 
     // Finish resize drag — one undo step, only if the final rect actually changed
     if (this.isResizingNode && this.resizeNodeId) {
@@ -836,6 +981,7 @@ export class CanvasComponent {
       this.resizeNodeId = null;
       this.resizeCorner = null;
       this.resizeStartRect = null;
+      this.resizeMoved = false;
     }
 
     if (this.isPanning) {
@@ -954,4 +1100,14 @@ export class CanvasComponent {
   onNodeSizeChanged(event: { nodeId: string; width: number; height: number }): void {
     this.graphService.updateNodeSize(event.nodeId, event.width, event.height);
   }
+}
+
+// The tight bounding rect of one or more rects — the reference an Alignment
+// drag aligns by (a multi-Selection uses the union of its roots).
+function unionRect(rects: Rect[]): Rect {
+  const minX = Math.min(...rects.map(r => r.x));
+  const minY = Math.min(...rects.map(r => r.y));
+  const maxX = Math.max(...rects.map(r => r.x + r.width));
+  const maxY = Math.max(...rects.map(r => r.y + r.height));
+  return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
 }

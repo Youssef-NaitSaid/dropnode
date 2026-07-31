@@ -15,6 +15,8 @@
 - a Command is an undoable user action exposing execute(), undo(), and a description
 - the History is the ordered record of executed Commands, split into an undo stack and a redo stack
 - the Snap Zone is a 30-canvas-unit radius around a Handle; a dragged connection endpoint inside it attaches to that Handle
+- an Alignment Guide is a transient red line shown while dragging a Node when one of its edges or center axes lines up with an edge or center of another visible Node; it is never part of Graph State
+- Alignment Snap is the magnetic pull that locks a dragged Node onto a nearby Alignment Guide within a small threshold, distinct from the Snap Zone which attaches connection endpoints to a Handle
 - a Node owns exactly four Handles, one per edge; a Group carries the same four Handles
 - deleting a Node cascade-deletes every Connection referencing it as source or target
 - all Graph State lives in GraphService signals; components mutate it only through the service, transient drags directly and undoable actions via Commands
@@ -96,6 +98,16 @@
 - Connections render as cubic beziers; control points extend perpendicular to each Handle's edge, offset clamped between 40 and 150 (distance x 0.4)
 - Handle positions are the midpoints of the Node's four edges, computed from x, y, width, height
 
+## alignment
+
+- label: dragging a Node shows red Alignment Guides and snaps its edges and center axes onto other visible Nodes within a screen-space threshold of ~6px (ALIGNMENT_SNAP_THRESHOLD over zoom), a deliberate divergence from the canvas-unit Snap Zone (ADR-0017)
+  command: grep -q 'ALIGNMENT_SNAP_THRESHOLD = 6' src/app/models/alignment.ts
+- alignment matches all three reference axes per dimension (left/center/right on X, top/middle/bottom on Y) in a full 3x3 pairing; the X and Y axes snap independently and the nearest match wins on each @implemented
+- a guide is drawn for every visible Node coincident at the snapped position, each line spanning the dragged Node plus those Nodes; candidates are Viewport-only and all guides vanish on mouseup @implemented
+- a dragged Group aligns by its own rect and a multi-Selection by the union of its roots; the moving set — the dragged Nodes plus any dragged Group's children — is never an alignment candidate @implemented
+- Alt+drag Duplicates align on the same drag path, with the stationary original a valid candidate @implemented
+- a Resize Grip drag aligns and snaps only its two moving edges (the dragged corner's vertical and horizontal edge) against candidates' edges and centers — the anchored edges and the resized rect's centers never participate; the Text-derived minimums and a Group's child-padding clamp override the snap, and an overridden snap shows no guide @implemented
+
 ## viewport
 
 - zoom is clamped to the range 0.1 to 5
@@ -126,7 +138,7 @@
 - Ctrl+Z undoes and Ctrl+Shift+Z redoes; there is no Ctrl+Y binding
 - executing or pushing any new Command clears the redo stack
 - undo and redo on empty stacks are silent no-ops; the stacks have no size limit
-- an entire Node drag is one undo step: per-mousemove position updates bypass History, and a single Command is pushed on mouseup only if movement exceeded 2px in either axis — a MoveNodeCommand normally, a compound when the drop also changed Group membership, a MoveGroupCommand for Group drags
+- an entire Node drag is one undo step: per-mousemove position updates bypass History, and a single Command is pushed on mouseup only if movement exceeded 2px in either axis and the net position actually changed (Alignment Snap can pull a small nudge back to the origin, pushing nothing) — a MoveNodeCommand normally, a compound when the drop also changed Group membership, a MoveGroupCommand for Group drags
 - a plain click on a Node selects it without creating a History entry
 - deleting a Node via Delete/Backspace removes the Node and its Connections as one compound undo step; undo restores the Node and its Connections with their original ids
 - Import does not clear History, so undoing after an Import can reference stale ids
