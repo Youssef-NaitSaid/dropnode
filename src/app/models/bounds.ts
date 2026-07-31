@@ -1,5 +1,6 @@
 import { GraphNode } from './node';
 import { ViewportState, ZOOM_MIN, ZOOM_MAX } from './viewport-state';
+import { Curve } from './curve';
 
 // A rectangle in Canvas units.
 export interface Bounds {
@@ -32,6 +33,17 @@ export function unionBounds(rects: readonly Bounds[]): Bounds | null {
   const maxX = Math.max(...rects.map(r => r.x + r.width));
   const maxY = Math.max(...rects.map(r => r.y + r.height));
   return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
+}
+
+/** Box enclosing a cubic bezier: the bounding box of its four control points,
+ *  which the curve never leaves (convex-hull property). Encloses the whole
+ *  arc, including the belly a Connection bows outside its endpoints. */
+export function curveBounds(curve: Curve): Bounds {
+  const xs = [curve.start.x, curve.cp1.x, curve.cp2.x, curve.end.x];
+  const ys = [curve.start.y, curve.cp1.y, curve.cp2.y, curve.end.y];
+  const minX = Math.min(...xs);
+  const minY = Math.min(...ys);
+  return { x: minX, y: minY, width: Math.max(...xs) - minX, height: Math.max(...ys) - minY };
 }
 
 /**

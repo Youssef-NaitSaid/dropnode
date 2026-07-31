@@ -3,7 +3,8 @@ import { GraphNode, HandleSide, NODE_PALETTE } from '../models/node';
 import { Connection, ArrowheadType, ArrowheadEnd, ARROWHEAD_TYPES, defaultArrowhead, TEXT_POSITION_MIN, TEXT_POSITION_MAX, TEXT_POSITION_DEFAULT } from '../models/connection';
 import { GraphState } from '../models/graph-state';
 import { ViewportState, ZOOM_MIN, ZOOM_MAX } from '../models/viewport-state';
-import { Bounds, graphBounds, unionBounds, frameViewport } from '../models/bounds';
+import { Bounds, graphBounds, unionBounds, curveBounds, frameViewport } from '../models/bounds';
+import { connectionCurve } from '../models/curve';
 import { Text, textFromString, isTextEmpty, validateText, canonicalizeText } from '../models/text';
 
 @Injectable({ providedIn: 'root' })
@@ -386,7 +387,7 @@ export class GraphService {
   // visible-canvas region, centered, never magnifying past 1x. An empty graph
   // is a silent no-op. Pure Viewport change — no History entry.
   zoomToFit(viewWidth: number, viewHeight: number): void {
-    const bounds = graphBounds(this.nodes());
+    const bounds = this.contentBounds();
     if (!bounds) return;
     this.viewportState.set(frameViewport(bounds, viewWidth, viewHeight, GraphService.FIT_MAX_ZOOM));
   }
@@ -417,19 +418,32 @@ export class GraphService {
     const connId = this.selectedConnectionId();
     if (connId) {
       const conn = this.connections().find(c => c.id === connId);
-      if (!conn) return null;
-      const a = this.getHandlePosition(conn.sourceNodeId, conn.sourceHandle);
-      const b = this.getHandlePosition(conn.targetNodeId, conn.targetHandle);
-      if (!a || !b) return null;
-      return {
-        x: Math.min(a.x, b.x),
-        y: Math.min(a.y, b.y),
-        width: Math.abs(a.x - b.x),
-        height: Math.abs(a.y - b.y),
-      };
+      return conn ? this.connectionBounds(conn) : null;
     }
 
     return null;
+  }
+
+  // Bounds enclosing everything drawn: all Nodes plus every Connection's curve
+  // (curves bow outside the node box). Null when there are no Nodes.
+  private contentBounds(): Bounds | null {
+    const nodeBox = graphBounds(this.nodes());
+    if (!nodeBox) return null;
+    const rects: Bounds[] = [nodeBox];
+    for (const conn of this.connections()) {
+      const b = this.connectionBounds(conn);
+      if (b) rects.push(b);
+    }
+    return unionBounds(rects);
+  }
+
+  // A single Connection's bounds: the box of its cubic bezier control points
+  // (the curve stays within their convex hull), so a bowing arc is enclosed.
+  private connectionBounds(conn: Connection): Bounds | null {
+    const start = this.getHandlePosition(conn.sourceNodeId, conn.sourceHandle);
+    const end = this.getHandlePosition(conn.targetNodeId, conn.targetHandle);
+    if (!start || !end) return null;
+    return curveBounds(connectionCurve(start, end, conn.sourceHandle, conn.targetHandle));
   }
 
   // Handle position computation
