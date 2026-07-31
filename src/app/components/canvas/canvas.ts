@@ -26,6 +26,7 @@ import {
   SetNodeTextCommand,
   SetConnectionTextCommand,
   MoveConnectionTextCommand,
+  QuickAddNodeCommand,
   NodeRect,
 } from '../../services/commands';
 import { NodeComponent, GripCorner } from '../node/node';
@@ -266,10 +267,15 @@ export class CanvasComponent {
   private panStartPanX = 0;
   private panStartPanY = 0;
 
-  // Connection drag state — track source info for CreateConnectionCommand on drop
+  // Connection drag state — track source info for CreateConnectionCommand on drop;
+  // the moved flag is the standard 2px (canvas-unit) guard that keeps a stray
+  // Handle click from Quick-adding a Node
   private isDraggingConnection = false;
   private connectionSourceNodeId: string | null = null;
   private connectionSourceHandle: HandleSide | null = null;
+  private connectionDragStartClientX = 0;
+  private connectionDragStartClientY = 0;
+  private connectionDragMoved = false;
 
   // Connection Text card drag state — same 2px click/drag split as node drags;
   // a null original position means the Text sat at the midpoint (absent field)
@@ -421,6 +427,9 @@ export class CanvasComponent {
     this.isDraggingConnection = true;
     this.connectionSourceNodeId = event.nodeId;
     this.connectionSourceHandle = event.handle;
+    this.connectionDragStartClientX = event.event.clientX;
+    this.connectionDragStartClientY = event.event.clientY;
+    this.connectionDragMoved = false;
 
     const layer = this.connectionLayer();
     if (layer) {
@@ -493,6 +502,13 @@ export class CanvasComponent {
     }
 
     if (this.isDraggingConnection) {
+      const vp = this.graphService.viewportState();
+      const dx = (event.clientX - this.connectionDragStartClientX) / vp.zoom;
+      const dy = (event.clientY - this.connectionDragStartClientY) / vp.zoom;
+      if (Math.abs(dx) > 2 || Math.abs(dy) > 2) {
+        this.connectionDragMoved = true;
+      }
+
       const canvasPos = this.clientPointToCanvas(event.clientX, event.clientY);
       if (!canvasPos) return;
 
@@ -524,7 +540,7 @@ export class CanvasComponent {
   }
 
   @HostListener('document:mouseup', ['$event'])
-  onMouseUp(_event: MouseEvent): void {
+  onMouseUp(event: MouseEvent): void {
     // Finish an Alt+drag duplicate — the whole gesture is one undo step.
     // Without movement the spawn is aborted (mirroring the 2px move rule).
     if (this.isDraggingNode && this.dragNodeId && this.dragIsSpawnedDuplicate) {
@@ -636,21 +652,43 @@ export class CanvasComponent {
       this.isPanning = false;
     }
 
-    // Finish connection drag — create connection via command
+    // Finish connection drag — snapped drops create a Connection; un-snapped
+    // drops past the 2px guard Quick-add a connected Node at the drop point
     if (this.isDraggingConnection) {
       this.isDraggingConnection = false;
       const layer = this.connectionLayer();
       if (layer) {
+        // Always end the layer drag (clears the ghost), then decide the drop
         const result = layer.endConnectionDrag();
-        if (result && this.connectionSourceNodeId && this.connectionSourceHandle) {
-          const cmd = new CreateConnectionCommand(
-            this.graphService,
-            this.connectionSourceNodeId,
-            this.connectionSourceHandle,
-            result.targetNodeId,
-            result.targetHandle,
-          );
-          this.historyService.execute(cmd);
+        if (this.connectionSourceNodeId && this.connectionSourceHandle) {
+          if (result) {
+            const cmd = new CreateConnectionCommand(
+              this.graphService,
+              this.connectionSourceNodeId,
+              this.connectionSourceHandle,
+              result.targetNodeId,
+              result.targetHandle,
+            );
+            this.historyService.execute(cmd);
+          } else if (this.connectionDragMoved) {
+            const dropPos = this.clientPointToCanvas(event.clientX, event.clientY);
+            if (dropPos) {
+              const cmd = new QuickAddNodeCommand(
+                this.graphService,
+                this.connectionSourceNodeId,
+                this.connectionSourceHandle,
+                dropPos.x,
+                dropPos.y,
+              );
+              this.historyService.execute(cmd);
+              // Open the spawned Node's Text editor via the existing request
+              // signal (UI-only: redo never reopens the editor)
+              const nodeId = cmd.getNodeId();
+              if (nodeId) {
+                this.contextMenuService.editTextRequest.set(nodeId);
+              }
+            }
+          }
         }
       }
       this.connectionSourceNodeId = null;

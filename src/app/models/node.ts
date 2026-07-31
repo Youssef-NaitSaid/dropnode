@@ -2,6 +2,18 @@ import { Text } from './text';
 
 export type HandleSide = 'top' | 'right' | 'bottom' | 'left';
 
+// The Handle directly across a node from the given one. Both the connection
+// drag's ghost bezier and a Quick-add's committed Connection attach opposite
+// the source Handle, so they must share this map.
+export function oppositeHandle(handle: HandleSide): HandleSide {
+  switch (handle) {
+    case 'top': return 'bottom';
+    case 'right': return 'left';
+    case 'bottom': return 'top';
+    case 'left': return 'right';
+  }
+}
+
 // Curated background palette, retuned for the refined-dark canvas: light,
 // vivid pastels that stay legible with dark node text and pop on near-black.
 // An absent color means the default node background.

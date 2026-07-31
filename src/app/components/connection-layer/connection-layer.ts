@@ -1,5 +1,5 @@
 import { Component, computed, effect, input, output, signal, ChangeDetectionStrategy, inject } from '@angular/core';
-import { GraphNode, HandleSide, NODE_PALETTE } from '../../models/node';
+import { GraphNode, HandleSide, NODE_PALETTE, oppositeHandle } from '../../models/node';
 import { Connection, ArrowheadType, effectiveArrowhead, effectiveTextPosition } from '../../models/connection';
 import { Curve, connectionCurve, pointAt, textPositionFromPoint } from '../../models/curve';
 import { Text, isTextEmpty } from '../../models/text';
@@ -290,22 +290,13 @@ export class ConnectionLayerComponent {
     if (!state) return '';
     const start = this.getHandlePos(state.sourceNodeId, state.sourceHandle);
     const end = { x: state.currentX, y: state.currentY };
-    const endHandle = state.targetHandle ?? this.getOppositeHandle(state.sourceHandle);
+    const endHandle = state.targetHandle ?? oppositeHandle(state.sourceHandle);
     return this.formatBezier(connectionCurve(start, end, state.sourceHandle, endHandle));
   }
 
   private formatBezier(curve: Curve): string {
     const { start, cp1, cp2, end } = curve;
     return `M ${start.x} ${start.y} C ${cp1.x} ${cp1.y}, ${cp2.x} ${cp2.y}, ${end.x} ${end.y}`;
-  }
-
-  private getOppositeHandle(handle: HandleSide): HandleSide {
-    switch (handle) {
-      case 'top': return 'bottom';
-      case 'right': return 'left';
-      case 'bottom': return 'top';
-      case 'left': return 'right';
-    }
   }
 
   // Public API for CanvasComponent
