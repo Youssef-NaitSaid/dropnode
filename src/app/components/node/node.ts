@@ -122,7 +122,14 @@ const GROUP_FILL_ALPHA = '4D';
     }
     .node-card.selected {
       border-color: #7c5cff;
-      box-shadow: 0 0 0 2px rgba(124, 92, 255, 0.4), 0 6px 20px rgba(124, 92, 255, 0.25);
+      box-shadow:
+        0 0 0 3px #7c5cff,
+        0 0 0 7px rgba(124, 92, 255, 0.35),
+        0 8px 28px rgba(124, 92, 255, 0.55);
+    }
+    /* Lift a selected node (and its ring) above neighbouring cards */
+    :host:has(.node-card.selected) {
+      z-index: 5;
     }
     /* While editing, the card hosts a text editor — not a drag target */
     .node-card.editing {

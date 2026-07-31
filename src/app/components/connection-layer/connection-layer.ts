@@ -240,7 +240,7 @@ export class ConnectionLayerComponent {
     });
   }
 
-  connectionSelect = output<{ connectionId: string; shiftKey: boolean }>();
+  connectionSelect = output<{ connectionId: string; additive: boolean }>();
   // Mousedown on a Text card: the Canvas owns the gesture (click-select vs
   // 2px-threshold drag along the curve), mirroring the node-drag split
   textDragStart = output<{ connectionId: string; event: MouseEvent }>();
@@ -360,17 +360,17 @@ export class ConnectionLayerComponent {
     // middle-drag must bubble up so the Canvas can pan
     if (event.button !== 0) return;
     event.stopPropagation();
-    this.connectionSelect.emit({ connectionId: conn.id, shiftKey: event.shiftKey });
+    this.connectionSelect.emit({ connectionId: conn.id, additive: event.ctrlKey });
   }
 
   // A Text card mousedown selects (as any Connection click) and arms a
   // potential drag; whether it becomes one is the Canvas's threshold call.
-  // Shift+click only toggles membership — it never arms a drag.
+  // Ctrl+click only toggles membership — it never arms a drag.
   onTextCardMouseDown(conn: Connection, event: MouseEvent): void {
     if (event.button !== 0) return;
     event.stopPropagation();
-    this.connectionSelect.emit({ connectionId: conn.id, shiftKey: event.shiftKey });
-    if (!event.shiftKey) {
+    this.connectionSelect.emit({ connectionId: conn.id, additive: event.ctrlKey });
+    if (!event.ctrlKey) {
       this.textDragStart.emit({ connectionId: conn.id, event });
     }
   }

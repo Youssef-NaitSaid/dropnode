@@ -83,7 +83,7 @@
 - a quick-add drop point inside a Group's bounds parents the spawned Node into it (topmost-rendered Group wins), except when the source is that very Group: the Node spawns unparented and the Connection is still created
 - quick-add spawn, parenting, and Connection are one undo step that also selects the spawned Node (redo re-selects); the auto-opened Text editor is UI-only — it follows the standard edit rules, commits as a separate SetNodeTextCommand, never reopens on redo, and Escape cancels only the edit
 - during a connection drag a dashed ghost bezier renders from the source Handle to the cursor
-- clicking a Connection path or its Text card selects the Connection; Delete or Backspace deletes it as one undoable Command; Shift+click toggles its Selection membership instead
+- clicking a Connection path or its Text card selects the Connection; Delete or Backspace deletes it as one undoable Command; Ctrl+click toggles its Selection membership instead
 - the Connection swatch and Arrowhead rows show while any Connection is in the Selection and restyle every selected Connection as one compound undo step; a control reads active only when ALL selected Connections share its value
 - a Connection carries optional Text; double-clicking the path or Text card opens the Text editor at the Text's position on the curve with the content focused and selected — blur or Ctrl+Enter commits, Escape cancels, and committing empty removes the Text (deliberate deviation from the Node rule)
 - setting or clearing Connection Text is one undoable SetConnectionTextCommand; committing unchanged content pushes nothing onto History; createConnection never sets Text
@@ -114,8 +114,8 @@
 - the Selection is a set freely mixing Nodes and Connections — empty, one, or many (ADR-0015); it is transient interaction state, never serialized into Graph State, exports, or share links
 - a Group is selected as a unit: its children ride along implicitly and are never Selection members beside their own Group (the set normalizes them away); a child is individually selectable only while its Group is not selected
 - a Marquee (empty-Canvas left-drag past the 2px threshold) selects by touch: a Node by rect overlap, a Group via its own or any child's rect, a Connection when the rect touches its sampled curve or its Text card; touched elements highlight live and the Selection commits on mouseup
-- a plain Marquee replaces the Selection; Shift+Marquee adds the touched elements to the pre-drag Selection; a sub-2px press-release is a click — plain clears the Selection, with Shift it is a no-op
-- plain-click on an unselected element collapses the Selection to it; Shift+click toggles membership; mousedown on a member of a multi-Selection keeps the set and arms a drag — releasing without a drag collapses to that element (deferred collapse)
+- a plain Marquee replaces the Selection; Ctrl+Marquee adds the touched elements to the pre-drag Selection; a sub-2px press-release is a click — plain clears the Selection, with Ctrl it is a no-op
+- plain-click on an unselected element collapses the Selection to it; Ctrl+click toggles membership; mousedown on a member of a multi-Selection keeps the set and arms a drag — releasing without a drag collapses to that element (deferred collapse)
 - Ctrl+A selects every Group (as a unit), every loose Node, and every Connection
 - dragging any member moves the whole Selection rigidly — every root shifts by the same delta, Connections follow their endpoints — as one compound undo step; Group membership is frozen during a multi-Selection drag (single-element drags keep the center-point join-on-drop rule)
 - Delete/Backspace on a multi-Selection removes everything as one compound undo step: explicitly selected Connections, each Node with its cascaded Connections, and a selected Group together WITH its children (deliberate divergence — a single-Group Delete still releases them); undo restores all original ids

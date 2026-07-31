@@ -394,13 +394,13 @@ export class CanvasComponent {
     if (event.button !== 0) return;
 
     // Arm a Marquee; whether it becomes one (drag) or stays a click (clear,
-    // or Shift no-op) is resolved by the 2px threshold
+    // or Ctrl no-op) is resolved by the 2px threshold
     this.isMarqueeArmed = true;
     this.marqueeActive = false;
-    this.marqueeAdditive = event.shiftKey;
+    this.marqueeAdditive = event.ctrlKey;
     this.marqueeStartClientX = event.clientX;
     this.marqueeStartClientY = event.clientY;
-    this.marqueeBase = event.shiftKey
+    this.marqueeBase = event.ctrlKey
       ? {
           nodeIds: this.graphService.selectedNodeIds(),
           connectionIds: this.graphService.selectedConnectionIds(),
@@ -481,8 +481,8 @@ export class CanvasComponent {
       return;
     }
 
-    // Shift+click toggles Selection membership and never arms a drag
-    if (event.event.shiftKey && !event.event.altKey) {
+    // Ctrl+click toggles Selection membership and never arms a drag
+    if (event.event.ctrlKey && !event.event.altKey) {
       this.graphService.toggleNodeSelection(event.nodeId);
       return;
     }
@@ -936,10 +936,10 @@ export class CanvasComponent {
     this.historyService.execute(cmd);
   }
 
-  // Plain click on a Connection collapses the Selection to it; Shift+click
+  // Plain click on a Connection collapses the Selection to it; Ctrl+click
   // toggles its membership (the layer already filtered to left-button)
-  onConnectionSelect(event: { connectionId: string; shiftKey: boolean }): void {
-    if (event.shiftKey) {
+  onConnectionSelect(event: { connectionId: string; additive: boolean }): void {
+    if (event.additive) {
       this.graphService.toggleConnectionSelection(event.connectionId);
     } else {
       this.graphService.selectConnection(event.connectionId);
