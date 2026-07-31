@@ -104,6 +104,10 @@
 - mousedown-drag on empty Canvas pans the Viewport and deselects the current Node
 - reset view restores pan (0,0) and zoom 1; importing or clearing a graph does NOT reset the Viewport
 - pan and zoom apply as one shared CSS translate+scale transform covering both the DOM node layer and the SVG connection layer
+- Zoom to fit frames all Nodes (nodes-only box, Groups included) into 90% of the visible Canvas, centered on both axes, never magnifying past 1x; an empty graph is a silent no-op @spec
+- Zoom to selection frames the selected element — a Node by its rect, a Group unioned with its children, a Connection by its two endpoint Handles — into 90% of the Viewport, centered, magnifying no further than 2x; no selection is a silent no-op @spec
+- Zoom to fit and Zoom to selection are bounds-centered — a third zoom-centering behavior alongside cursor-centered wheel zoom and origin-centered toolbar buttons; both write pan+zoom instantly within the [0.1,5] clamp, add no History entry, and persist via the normal Viewport auto-save @spec
+- the toolbar zoom cluster carries a Zoom to fit button distinct from Reset View; Zoom to selection is keyboard-only, with no toolbar button or Context Menu entry @spec
 
 ## history
 
@@ -177,6 +181,7 @@
 - all keyboard shortcuts are ignored while focus is in an input, textarea, or contenteditable element
 - Delete or Backspace deletes the selected element — a Connection alone, or a Node with its Connections; Escape deselects and blurs the active element
 - Ctrl+X cuts and Ctrl+C copies the selected Node or Group; Ctrl+V pastes at the cursor; Ctrl+D duplicates the selected Node or Group — no selection (or an empty Clipboard for paste) is a silent no-op
+- Shift+1 runs Zoom to fit and Shift+2 Zoom to selection, keyed off event.code (Digit1/Digit2) for layout independence and suppressed by the input-focus guard @spec
 
 ## clipboard
 

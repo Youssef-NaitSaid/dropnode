@@ -1,4 +1,5 @@
 import { GraphNode } from './node';
+import { graphBounds } from './bounds';
 
 // PNG Export capture rules (ADR-0014): full graph bounds plus fixed padding,
 // rasterized at 2x so Text stays crisp when enlarged. Independent of the
@@ -19,7 +20,8 @@ export interface ExportBounds {
 
 /** Bounding box of all Nodes plus padding; an empty graph yields just the padded origin. */
 export function exportBounds(nodes: readonly GraphNode[]): ExportBounds {
-  if (nodes.length === 0) {
+  const raw = graphBounds(nodes);
+  if (!raw) {
     const side = EXPORT_PADDING * 2;
     return {
       x: 0, y: 0, width: side, height: side,
@@ -27,15 +29,11 @@ export function exportBounds(nodes: readonly GraphNode[]): ExportBounds {
       outputHeight: side * EXPORT_SCALE,
     };
   }
-  const minX = Math.min(...nodes.map(n => n.x));
-  const minY = Math.min(...nodes.map(n => n.y));
-  const maxX = Math.max(...nodes.map(n => n.x + n.width));
-  const maxY = Math.max(...nodes.map(n => n.y + n.height));
-  const width = maxX - minX + EXPORT_PADDING * 2;
-  const height = maxY - minY + EXPORT_PADDING * 2;
+  const width = raw.width + EXPORT_PADDING * 2;
+  const height = raw.height + EXPORT_PADDING * 2;
   return {
-    x: minX - EXPORT_PADDING,
-    y: minY - EXPORT_PADDING,
+    x: raw.x - EXPORT_PADDING,
+    y: raw.y - EXPORT_PADDING,
     width,
     height,
     outputWidth: width * EXPORT_SCALE,

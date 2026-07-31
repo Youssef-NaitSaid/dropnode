@@ -2,13 +2,18 @@ import { Injectable, signal, computed } from '@angular/core';
 import { GraphNode, HandleSide, NODE_PALETTE } from '../models/node';
 import { Connection, ArrowheadType, ArrowheadEnd, ARROWHEAD_TYPES, defaultArrowhead, TEXT_POSITION_MIN, TEXT_POSITION_MAX, TEXT_POSITION_DEFAULT } from '../models/connection';
 import { GraphState } from '../models/graph-state';
-import { ViewportState } from '../models/viewport-state';
+import { ViewportState, ZOOM_MIN, ZOOM_MAX } from '../models/viewport-state';
+import { Bounds, graphBounds, unionBounds, frameViewport } from '../models/bounds';
 import { Text, textFromString, isTextEmpty, validateText, canonicalizeText } from '../models/text';
 
 @Injectable({ providedIn: 'root' })
 export class GraphService {
   // Padding kept between a Group's edges and its children's bounding box
   static readonly GROUP_CHILD_PADDING = 16;
+  // Framing never over-magnifies: fit the whole graph no larger than 1x, a
+  // single selection no larger than 2x (both still within the [0.1,5] clamp)
+  static readonly FIT_MAX_ZOOM = 1;
+  static readonly SELECTION_MAX_ZOOM = 2;
 
   // Core state signals
   readonly nodes = signal<GraphNode[]>([]);
@@ -367,7 +372,7 @@ export class GraphService {
 
   zoomBy(delta: number, centerX: number, centerY: number): void {
     const current = this.viewportState();
-    const newZoom = Math.min(Math.max(current.zoom + delta, 0.1), 5);
+    const newZoom = Math.min(Math.max(current.zoom + delta, ZOOM_MIN), ZOOM_MAX);
     const zoomRatio = newZoom / current.zoom;
 
     // Zoom centered on the given point
@@ -375,6 +380,56 @@ export class GraphService {
     const newPanY = centerY - (centerY - current.panY) * zoomRatio;
 
     this.viewportState.set({ panX: newPanX, panY: newPanY, zoom: newZoom });
+  }
+
+  // Frame the whole graph (nodes-only bounds, Groups included) into the given
+  // visible-canvas region, centered, never magnifying past 1x. An empty graph
+  // is a silent no-op. Pure Viewport change — no History entry.
+  zoomToFit(viewWidth: number, viewHeight: number): void {
+    const bounds = graphBounds(this.nodes());
+    if (!bounds) return;
+    this.viewportState.set(frameViewport(bounds, viewWidth, viewHeight, GraphService.FIT_MAX_ZOOM));
+  }
+
+  // Frame the selected element into the given visible-canvas region, centered,
+  // magnifying no further than 2x. No selection is a silent no-op. Pure
+  // Viewport change — no History entry.
+  zoomToSelection(viewWidth: number, viewHeight: number): void {
+    const bounds = this.selectionBounds();
+    if (!bounds) return;
+    this.viewportState.set(frameViewport(bounds, viewWidth, viewHeight, GraphService.SELECTION_MAX_ZOOM));
+  }
+
+  // Bounds of the current selection: a Node by its rect, a Group unioned with
+  // its children (a child's edge can overhang the Group rect), a Connection by
+  // the box of its two endpoint Handles. Null when nothing is selected.
+  private selectionBounds(): Bounds | null {
+    const node = this.selectedNode();
+    if (node) {
+      const rect: Bounds = { x: node.x, y: node.y, width: node.width, height: node.height };
+      if (node.kind !== 'group') return rect;
+      const childRects = this.childrenOf(node.id).map(
+        c => ({ x: c.x, y: c.y, width: c.width, height: c.height }),
+      );
+      return unionBounds([rect, ...childRects]);
+    }
+
+    const connId = this.selectedConnectionId();
+    if (connId) {
+      const conn = this.connections().find(c => c.id === connId);
+      if (!conn) return null;
+      const a = this.getHandlePosition(conn.sourceNodeId, conn.sourceHandle);
+      const b = this.getHandlePosition(conn.targetNodeId, conn.targetHandle);
+      if (!a || !b) return null;
+      return {
+        x: Math.min(a.x, b.x),
+        y: Math.min(a.y, b.y),
+        width: Math.abs(a.x - b.x),
+        height: Math.abs(a.y - b.y),
+      };
+    }
+
+    return null;
   }
 
   // Handle position computation
