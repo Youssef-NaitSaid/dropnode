@@ -418,6 +418,56 @@ describe('GraphService', () => {
     });
   });
 
+  describe('setConnectionStrokePattern / setConnectionStrokeWeight', () => {
+    function makeConn(): Connection {
+      const n1 = service.createNode('N1', 0, 0);
+      const n2 = service.createNode('N2', 300, 0);
+      return service.createConnection(n1.id, 'right', n2.id, 'left')!;
+    }
+
+    it('stores a non-default Stroke Pattern', () => {
+      const conn = makeConn();
+      service.setConnectionStrokePattern(conn.id, 'dashed');
+      expect(service.connections()[0].strokePattern).toBe('dashed');
+    });
+
+    it('removes the pattern field when set back to its default (solid)', () => {
+      const conn = makeConn();
+      service.setConnectionStrokePattern(conn.id, 'dotted');
+      service.setConnectionStrokePattern(conn.id, 'solid');
+      expect('strokePattern' in service.connections()[0]).toBe(false);
+    });
+
+    it('stores a non-default Stroke Weight', () => {
+      const conn = makeConn();
+      service.setConnectionStrokeWeight(conn.id, 'thick');
+      expect(service.connections()[0].strokeWeight).toBe('thick');
+    });
+
+    it('removes the weight field when set back to its default (normal)', () => {
+      const conn = makeConn();
+      service.setConnectionStrokeWeight(conn.id, 'thin');
+      service.setConnectionStrokeWeight(conn.id, 'normal');
+      expect('strokeWeight' in service.connections()[0]).toBe(false);
+    });
+
+    it('the two fields are independent — setting one never touches the other', () => {
+      const conn = makeConn();
+      service.setConnectionStrokePattern(conn.id, 'dashed');
+      service.setConnectionStrokeWeight(conn.id, 'thick');
+      service.setConnectionStrokePattern(conn.id, 'solid');
+      const c = service.connections()[0];
+      expect('strokePattern' in c).toBe(false);
+      expect(c.strokeWeight).toBe('thick');
+    });
+
+    it('createConnection sets neither stroke field', () => {
+      const conn = makeConn();
+      expect('strokePattern' in conn).toBe(false);
+      expect('strokeWeight' in conn).toBe(false);
+    });
+  });
+
   describe('selectNode / clearSelection', () => {
     it('sets selectedNodeId', () => {
       const node = service.createNode('Test', 0, 0);
@@ -1034,6 +1084,67 @@ describe('GraphService', () => {
       expect('color' in c).toBe(false);
       expect('startArrowhead' in c).toBe(false);
       expect('endArrowhead' in c).toBe(false);
+      expect('strokePattern' in c).toBe(false);
+      expect('strokeWeight' in c).toBe(false);
+    });
+
+    it('out-of-range strokePattern rejected wholesale', () => {
+      const result = service.importGraph({
+        nodes: [
+          { id: 'n1', label: 'Node 1', x: 0, y: 0, width: 160, height: 48 },
+          { id: 'n2', label: 'Node 2', x: 200, y: 0, width: 160, height: 48 },
+        ],
+        connections: [
+          { id: 'c1', sourceNodeId: 'n1', sourceHandle: 'right', targetNodeId: 'n2', targetHandle: 'left', strokePattern: 'wavy' },
+        ],
+      } as any);
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('Invalid connection c1: strokePattern must be solid, dashed, or dotted');
+    });
+
+    it('out-of-range strokeWeight rejected wholesale', () => {
+      const result = service.importGraph({
+        nodes: [
+          { id: 'n1', label: 'Node 1', x: 0, y: 0, width: 160, height: 48 },
+          { id: 'n2', label: 'Node 2', x: 200, y: 0, width: 160, height: 48 },
+        ],
+        connections: [
+          { id: 'c1', sourceNodeId: 'n1', sourceHandle: 'right', targetNodeId: 'n2', targetHandle: 'left', strokeWeight: 5 },
+        ],
+      } as any);
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('Invalid connection c1: strokeWeight must be thin, normal, or thick');
+    });
+
+    it('valid stroke styling values import', () => {
+      const result = service.importGraph({
+        nodes: [
+          { id: 'n1', label: 'Node 1', x: 0, y: 0, width: 160, height: 48 },
+          { id: 'n2', label: 'Node 2', x: 200, y: 0, width: 160, height: 48 },
+        ],
+        connections: [
+          { id: 'c1', sourceNodeId: 'n1', sourceHandle: 'right', targetNodeId: 'n2', targetHandle: 'left', strokePattern: 'dotted', strokeWeight: 'thick' },
+        ],
+      } as any);
+      expect(result.success).toBe(true);
+      expect(service.connections()[0].strokePattern).toBe('dotted');
+      expect(service.connections()[0].strokeWeight).toBe('thick');
+    });
+
+    it('normalizes explicitly-default stroke values to absent on import (ADR-0020 canonical form)', () => {
+      const result = service.importGraph({
+        nodes: [
+          { id: 'n1', label: 'Node 1', x: 0, y: 0, width: 160, height: 48 },
+          { id: 'n2', label: 'Node 2', x: 200, y: 0, width: 160, height: 48 },
+        ],
+        connections: [
+          { id: 'c1', sourceNodeId: 'n1', sourceHandle: 'right', targetNodeId: 'n2', targetHandle: 'left', strokePattern: 'solid', strokeWeight: 'normal' },
+        ],
+      } as any);
+      expect(result.success).toBe(true);
+      const c = service.connections()[0];
+      expect('strokePattern' in c).toBe(false);
+      expect('strokeWeight' in c).toBe(false);
     });
 
     function textPositionPayload(textPosition: unknown, withText = true) {

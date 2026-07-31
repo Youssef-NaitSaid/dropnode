@@ -13,6 +13,16 @@ export type ArrowheadEnd = 'start' | 'end';
 export const DEFAULT_START_ARROWHEAD: ArrowheadType = 'none';
 export const DEFAULT_END_ARROWHEAD: ArrowheadType = 'arrow';
 
+// Stroke styling (ADR-0020): two independent dash-scheme and thickness presets.
+// Absent means the default, which matches the pre-feature rendering exactly.
+export type StrokePattern = 'solid' | 'dashed' | 'dotted';
+export const STROKE_PATTERNS: readonly StrokePattern[] = ['solid', 'dashed', 'dotted'];
+export const DEFAULT_STROKE_PATTERN: StrokePattern = 'solid';
+
+export type StrokeWeight = 'thin' | 'normal' | 'thick';
+export const STROKE_WEIGHTS: readonly StrokeWeight[] = ['thin', 'normal', 'thick'];
+export const DEFAULT_STROKE_WEIGHT: StrokeWeight = 'normal';
+
 // Text position along the curve (ADR-0013): a bezier parameter clamped away
 // from the endpoints so the Text card never buries an Arrowhead or a node.
 // Absent means the midpoint; only deviations are stored.
@@ -37,6 +47,10 @@ export interface Connection {
   startArrowhead?: ArrowheadType;
   // Arrowhead at the target endpoint; absent means DEFAULT_END_ARROWHEAD
   endArrowhead?: ArrowheadType;
+  // Stroke Pattern of the curve (ADR-0020); absent means DEFAULT_STROKE_PATTERN
+  strokePattern?: StrokePattern;
+  // Stroke Weight of the curve (ADR-0020); absent means DEFAULT_STROKE_WEIGHT
+  strokeWeight?: StrokeWeight;
 }
 
 /** The position a Connection's Text actually occupies (stored value, or the midpoint). */
@@ -53,4 +67,42 @@ export function defaultArrowhead(end: ArrowheadEnd): ArrowheadType {
 export function effectiveArrowhead(conn: Connection, end: ArrowheadEnd): ArrowheadType {
   const stored = end === 'start' ? conn.startArrowhead : conn.endArrowhead;
   return stored ?? defaultArrowhead(end);
+}
+
+/** The Stroke Pattern a Connection actually shows (stored value, or solid). */
+export function effectiveStrokePattern(conn: Connection): StrokePattern {
+  return conn.strokePattern ?? DEFAULT_STROKE_PATTERN;
+}
+
+/** The Stroke Weight a Connection actually shows (stored value, or normal). */
+export function effectiveStrokeWeight(conn: Connection): StrokeWeight {
+  return conn.strokeWeight ?? DEFAULT_STROKE_WEIGHT;
+}
+
+// Interaction state a Connection's curve renders in: at rest, hovered, or selected.
+export type StrokeState = 'base' | 'hover' | 'selected';
+
+// Weight presets in px; 'normal' equals the pre-feature base width so existing
+// graphs stay pixel-identical. Selection chrome thickens relatively (ADR-0020):
+// a fixed increment on top of the Connection's own weight, keeping the
+// thin/normal/thick ordering visible while selected — normal's 2.5/3.5/4
+// reproduces the shipped hover/selected widths exactly.
+const STROKE_WEIGHT_PX: Record<StrokeWeight, number> = { thin: 1.5, normal: 2.5, thick: 4.5 };
+const STROKE_STATE_INCREMENT: Record<StrokeState, number> = { base: 0, hover: 1, selected: 1.5 };
+
+/** The rendered curve width in px for a weight preset in an interaction state. */
+export function strokeWidthPx(weight: StrokeWeight, state: StrokeState): number {
+  return STROKE_WEIGHT_PX[weight] + STROKE_STATE_INCREMENT[state];
+}
+
+/**
+ * The SVG dasharray for a pattern at a stroke width, or null for solid.
+ * Rhythms are multiples of the width (ADR-0020) so a pattern reads the same
+ * at every weight: dashed is a 3w dash with a 2w gap; dotted is a near-zero
+ * dash (rounded caps make it a dot) with a 2w gap.
+ */
+export function strokeDasharray(pattern: StrokePattern, widthPx: number): string | null {
+  if (pattern === 'solid') return null;
+  if (pattern === 'dashed') return `${3 * widthPx} ${2 * widthPx}`;
+  return `0.1 ${2 * widthPx}`;
 }

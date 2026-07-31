@@ -1,6 +1,6 @@
 import { Injectable, signal, computed } from '@angular/core';
 import { GraphNode, HandleSide, NODE_PALETTE } from '../models/node';
-import { Connection, ArrowheadType, ArrowheadEnd, ARROWHEAD_TYPES, defaultArrowhead, TEXT_POSITION_MIN, TEXT_POSITION_MAX, TEXT_POSITION_DEFAULT } from '../models/connection';
+import { Connection, ArrowheadType, ArrowheadEnd, ARROWHEAD_TYPES, defaultArrowhead, StrokePattern, StrokeWeight, STROKE_PATTERNS, STROKE_WEIGHTS, DEFAULT_STROKE_PATTERN, DEFAULT_STROKE_WEIGHT, TEXT_POSITION_MIN, TEXT_POSITION_MAX, TEXT_POSITION_DEFAULT } from '../models/connection';
 import { GraphState } from '../models/graph-state';
 import { ViewportState, ZOOM_MIN, ZOOM_MAX } from '../models/viewport-state';
 import { Bounds, unionBounds, contentBounds, connectionBounds, frameViewport } from '../models/bounds';
@@ -381,6 +381,34 @@ export class GraphService {
     );
   }
 
+  // Stroke styling (ADR-0020): like Arrowheads, setting a field to its default
+  // removes it — absent means default, so only deviations are stored.
+  setConnectionStrokePattern(id: string, pattern: StrokePattern): void {
+    this.connections.update(conns =>
+      conns.map(c => {
+        if (c.id !== id) return c;
+        if (pattern === DEFAULT_STROKE_PATTERN) {
+          const { strokePattern: _removed, ...rest } = c;
+          return rest;
+        }
+        return { ...c, strokePattern: pattern };
+      })
+    );
+  }
+
+  setConnectionStrokeWeight(id: string, weight: StrokeWeight): void {
+    this.connections.update(conns =>
+      conns.map(c => {
+        if (c.id !== id) return c;
+        if (weight === DEFAULT_STROKE_WEIGHT) {
+          const { strokeWeight: _removed, ...rest } = c;
+          return rest;
+        }
+        return { ...c, strokeWeight: weight };
+      })
+    );
+  }
+
   // Selection (ADR-0015): one set freely mixing Nodes and Connections. The
   // set is normalized so a Group and its own children are never both members
   // (group-as-unit — children ride along implicitly).
@@ -561,6 +589,9 @@ export class GraphService {
     // deviations persist (ADR-0012), matching the "absent means default" rule.
     if (rest.startArrowhead === defaultArrowhead('start')) delete rest.startArrowhead;
     if (rest.endArrowhead === defaultArrowhead('end')) delete rest.endArrowhead;
+    // Same canonical form for stroke styling (ADR-0020)
+    if (rest.strokePattern === DEFAULT_STROKE_PATTERN) delete rest.strokePattern;
+    if (rest.strokeWeight === DEFAULT_STROKE_WEIGHT) delete rest.strokeWeight;
     // Same canonical form for textPosition: an explicit midpoint is absent
     if (rest.textPosition === TEXT_POSITION_DEFAULT) delete rest.textPosition;
     if (conn.text) return { ...rest, text: canonicalizeText(conn.text) };
@@ -710,6 +741,12 @@ export class GraphService {
       }
       if (conn['endArrowhead'] !== undefined && !ARROWHEAD_TYPES.includes(conn['endArrowhead'] as ArrowheadType)) {
         return { valid: false, error: `Invalid connection ${connId}: endArrowhead must be none, arrow, or triangle` };
+      }
+      if (conn['strokePattern'] !== undefined && !STROKE_PATTERNS.includes(conn['strokePattern'] as StrokePattern)) {
+        return { valid: false, error: `Invalid connection ${connId}: strokePattern must be solid, dashed, or dotted` };
+      }
+      if (conn['strokeWeight'] !== undefined && !STROKE_WEIGHTS.includes(conn['strokeWeight'] as StrokeWeight)) {
+        return { valid: false, error: `Invalid connection ${connId}: strokeWeight must be thin, normal, or thick` };
       }
       // textPosition is geometry-determining like a handle side: one legal
       // shape, rejected wholesale otherwise (ADR-0013) — never repaired.
